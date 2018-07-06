@@ -7,11 +7,9 @@ import sys
 def _parse_args():
 	
 	parser = argparse.ArgumentParser()
-	parser.add_argument("dir", help="Directory with dataset to be splited")
-	parser.add_argument("split_train", help="Text file with the split for the train set")
-	parser.add_argument("split_valid", help="Text file with the split for the validation set")
-	parser.add_argument("-ext","--extension", help="Extension of files with dot", default=".jpg")
-	parser.add_argument("-t","--type", help="Type of split file:\n0 - video_sample nb_frames class\n1 - Class_Folder/video_sample.ext", default=0, type=int)
+	parser.add_argument("truth", help="File with the ground truth bounding boxes for a video")
+	parser.add_argument("predicted", help="File with hte predicted bounding boxes for the same video")
+	parser.add_argument("outdir", help="Directory the calculate metrics")
 	
 	
 	return parser.parse_args()
@@ -65,8 +63,44 @@ def fmeasure(prec, rec):
 
 	return (2*prec*rec)/(prec + rec)
 	
+def sample_iou(ground_truth_file, predict_file, outdir, keep=1):
+	""" Calculate and save the iou between bounding boxes of the ground truth and predicted values
+	
+	Arguments:
+	ground_truth_file --  name of the file containing the ground truth values of bounding boxes for some frames of video
+	predict_file --  name of the file containing the predicted values of bounding boxes for all frames of video
+	outdir --  output directory to where the iou file will be writed
+	keep -- how many subdirectories from the path of the `ground_truth_file` to keep when saving the output file in the `outdir`
+	"""
+
+	# read the file with the bounding boxes of a video and convert the information to numpy array of floats
+	with open(ground_truth_file, 'r') as infile:
+		# read all file, split by lines, then inside lines split by space, then cast every element to float, then create a numpy array with this
+		truth = np.array([list(map(float, line.split())) for line in infile.read().splitlines()])
+		# so every row will be a frame, and the collums have frame number, x1, y1, x2, y2
+	# same above explanation applies to the following
+	with open(predict_file, 'r') as infile:
+		predict = np.array([list(map(float, line.split())) for line in infile.read().splitlines()])
+		
+	# when predict have more frame than truth...
+	truth_frames = list(truth[:,0])
+	# ...I get the iou only from those frames whose are present in them both
+	frames_iou = ["{} {}".format(int(frame[0]), iou(frame[1:], truth[truth_frames.index(frame[0]),1:])) for frame in predict if frame[0] in truth_frames]
+	
+	# formating again one frame per line
+	frames_iou = "\n".join(frames_iou)
+	
+	# join (outdir, the subdirectories to keep, filename with extension)
+	path = os.path.join(outdir, *(ground_truth_file.split(os.sep)[-(keep+1):-1]))
+	os.makedirs(path, exist_ok=True)
+	name = os.path.splitext(os.path.basename(ground_truth_file))[0] + '.iou'
+	name = os.path.join(path, name)
+	
+	with open(name, 'w') as outfile:
+		outfile.write(frames_iou)
+	
 if __name__ == "__main__":
 
 	args = _parse_args()
-	_main(args.dir, args.split_train, args.split_valid, args.extension)
+	sample_iou(args.truth, args.predicted, args.outdir)
 	
