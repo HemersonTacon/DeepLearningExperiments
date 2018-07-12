@@ -2,7 +2,7 @@
 from keras import applications, optimizers, regularizers
 from keras.callbacks import CSVLogger, TensorBoard, ModelCheckpoint, LearningRateScheduler
 from keras.layers import Conv2D, MaxPooling2D, Activation, Dropout, Flatten, Dense, GlobalAveragePooling2D, BatchNormalization, Input
-from keras.models import Model, Sequential
+from keras.models import Model, Sequential, model_from_json
 from keras.preprocessing.image import ImageDataGenerator
 from keras.metrics import top_k_categorical_accuracy
 from keras.utils.vis_utils import plot_model
@@ -19,6 +19,7 @@ import sys
 import time
 import cv2
 from math import sqrt
+import json
 
 # tamanho antes do crop
 img_size_for_crop = 192
@@ -54,248 +55,6 @@ CFG_FEATURES = {
 		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
 		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
 		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'C': ({"type": "Conv2d", "filters": 32, "size":5, "stride": 2, "padding": "valid"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":5, "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":5, "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":5, "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'D': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'E': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'F': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2}
-		 ),
-	'G': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'H': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'I': ({"type": "Conv2d", "filters": 8, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 8, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'J': ({"type": "Conv2d", "filters": 8, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 8, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 8, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2}
-		 ),
-	'H2': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.2}
-		 ),
-	'H4': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.4}
-		 ),
-	'H6': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.6}
-		 ),
-	'H8': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.8}
-		 ),
-	'H9': ({"type": "Conv2d", "filters": 16, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 16, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 16, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 32, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.9}
-		 ),
-	'A2': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.2}
-		 ),
-	'A4': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.4}
-		 ),
-	'A6': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.6}
-		 ),
-	'A8': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.8}
-		 ),
-	'A9': ({"type": "Conv2d", "filters": 32, "size":(1,1), "stride": 1, "padding": "valid"},
-		  {"type": "Conv2d", "filters": 32, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 64, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 3, "stride": 2},
-		  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"},
-		  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"},
-		  {"type": "MaxPool2d", "size": 2, "stride": 2},
-		  {"type": "Dropout", "rate": 0.9}
 		 )
 }
 
@@ -361,22 +120,24 @@ def _get_Args():
 	
 	parser = argparse.ArgumentParser()
 	parser.add_argument("dir", help="Directory containing the dataset splited in train, validation and test folders")
-	parser.add_argument("-d","--dense", help = "Model with extra dense layers", type=int, nargs='+')
-	parser.add_argument("-do","--dropout", help = "Dropout in all dense layers", type=float, nargs='+')
-	parser.add_argument("-opt","--optimizer", help = "Optimization algorithm", default='adam', choices=['adam', 'sgd', 'rmsprop'])
-	parser.add_argument("-opt_params","--optimizer_parameters", help = "Optimizer parameters", nargs='*')
-	parser.add_argument("-e","--epochs", help = "Number of times to run the entire dataset", type=int, default=5)
-	parser.add_argument("-lr","--learning_rate", help = "Learning rate", type=float, default=1e-3)
-	parser.add_argument("-bs","--batch_size", help = "Number of samples presented by iteration", type=int , default=16)
-	parser.add_argument("-kr","--kernel_regularizer", help = "Rate for kernel regularization", type=float)
-	parser.add_argument("-l","--log", help = "Log file", default='simple_model_log')
-	parser.add_argument("-rm","--resume_model", help = "Name of model to load")
-	parser.add_argument("-tboard","--tensorboard", help = "If present save run info to show in tensorboard", action='store_true')
-	parser.add_argument("-sp","--show_plots", help = "If present the plots of loss and accuracy will be shown", action='store_true')
-	parser.add_argument("-cfg","--config", help = "Use different architecture from hardcoded configurations", nargs='+')
-	parser.add_argument("-tl","--transfer_learning", help = "Use with resume model to transfer the weights and train with a low learning rate", action='store_true')
-	parser.add_argument("-nc","--nb_class", help = "Number of classes of the previous model", type=int)
-	parser.add_argument("-ft","--fine_tunning", help = "Number of layers to unfrozen", type=int)
+	parser.add_argument("-d", "--dense", help = "Model with extra dense layers", type=int, nargs='+')
+	parser.add_argument("-do", "--dropout", help = "Dropout in all dense layers", type=float, nargs='+')
+	parser.add_argument("-opt", "--optimizer", help = "Optimization algorithm", default='adam', choices=['adam', 'sgd', 'rmsprop'])
+	parser.add_argument("-opt_params", "--optimizer_parameters", help = "Optimizer parameters", nargs='*')
+	parser.add_argument("-e", "--epochs", help = "Number of times to run the entire dataset", type=int, default=5)
+	parser.add_argument("-lr", "--learning_rate", help = "Learning rate", type=float, default=1e-3)
+	parser.add_argument("-bs", "--batch_size", help = "Number of samples presented by iteration", type=int , default=16)
+	parser.add_argument("-kr", "--kernel_regularizer", help = "Rate for kernel regularization", type=float)
+	parser.add_argument("-l", "--log", help = "Log file", default='simple_model_log')
+	parser.add_argument("-rm", "--resume_model", help = "Name of model to load")
+	parser.add_argument("-tboard", "--tensorboard", help = "If present save run info to show in tensorboard", action='store_true')
+	parser.add_argument("-sp", "--show_plots", help = "If present the plots of loss and accuracy will be shown", action='store_true')
+	parser.add_argument("-cfg", "--config", help = "Use different architecture from hardcoded configurations", nargs='+')
+	parser.add_argument("-tl", "--transfer_learning", help = "Use with resume model to transfer the weights and train with a low learning rate", action='store_true')
+	parser.add_argument("-nc", "--nb_class", help = "Number of classes of the previous model", type=int)
+	parser.add_argument("-ft", "--fine_tunning", help = "Number of layers to unfrozen", type=int)
+	parser.add_argument("-ext", "--extension", help = "Dataset extension")
+	
 	
 	
 	return parser.parse_args()
@@ -468,6 +229,25 @@ def _make_layers(X, cfg, batch_norm, kernel_reg, dpout = None):
 			X = Activation('relu')(X)		
 			
 	return X
+
+def new_model_from_config(input_shape, num_classes, cfg0, cfg1, ext = '.json'):
+
+	cfg0 = cfg0.upper()
+	cfg1 = cfg1.upper()
+	dir = 'configurations'
+	name = 'model_{}_{}{}'.format(cfg0, cfg1, ext)
+	img_size = input_shape[0]
+	num_channels = input_shape[-1]
+	
+	file = os.path.join(dir, 'img_size_{}'.format(img_size), 'num_channels_{}'.format(num_channels), 'num_classes_{}'.format(num_classes), name)
+	
+	if os.path.isfile(file):
+		with open(file, "r") as f:
+			json_string = json.loads(f.read())
+		return model_from_json(json_string)
+	else:
+		print("ERROR: configuration {} {} doesn't exists! Check cfg parameters.".format(cfg0, cfg1))
+		return None
 	
 def model_from_config(input_shape, num_classes, kernel_reg, cfg0, cfg1, dpout = None, batch_norm=True, dense = None):
 
@@ -642,7 +422,7 @@ def run_CNN(args):
 	
 	train_gen = train_datagen.flow_from_directory(dir_train, target_size = (img_size, img_size), batch_size = args.batch_size, class_mode = 'categorical')
 	
-	train_gen = train_generator(train_gen, img_size, scale_ratios,num_channels)
+	#train_gen = train_generator(train_gen, img_size, scale_ratios,num_channels)
 	#train_gen = valid_generator(train_gen, img_size, num_channels, save_to_dir= "imgs\\train")
 	
 	#print("train generator len: "+str(len(train_generator)))
@@ -654,50 +434,17 @@ def run_CNN(args):
 	try:
 		test_datagen = ImageDataGenerator(rescale=1./255)
 		test_gen = test_datagen.flow_from_directory(dir_test, target_size = (img_size, img_size), batch_size = args.batch_size, class_mode = 'categorical')
-		test_gen = valid_generator(test_gen, img_size,num_channels)
+		#test_gen = valid_generator(test_gen, img_size,num_channels)
 	except:
 		test_gen = None
 	
 	valid_datagen = ImageDataGenerator(rescale=1./255)
 	valid_gen = valid_datagen.flow_from_directory(dir_valid, target_size = (img_size, img_size), batch_size = args.batch_size, class_mode = 'categorical') 
 	#valid_gen = valid_generator(valid_gen, img_size, num_channels, save_to_dir= "imgs\\valid")
-	valid_gen = train_generator(valid_gen, img_size, scale_ratios, num_channels)
+	#valid_gen = train_generator(valid_gen, img_size, scale_ratios, num_channels)
 	
 	print('Dataset loaded.')
 	
-	count = 0
-	'''
-	names = train_generator.filenames
-	while True:
-		tempx, tempy = next(crop_gen)
-		
-		side = int(sqrt(args.batch_size))
-		
-		print("Shape: {}".format(str(tempx.shape)))
-		fig,axes = plt.subplots(nrows = side, ncols = side, figsize=(129,129))
-		
-		print(names[count*args.batch_size : (count+1)*args.batch_size])
-		
-		item = train_generator[count]
-		#print("type of item: {}".format(type(item)))
-		#test = np.array(item)
-		#print("Len item: {}".format(len(item)))
-		#print(item[1])
-		for i in range(4):
-			for j in range(4):
-				axes[i,j].imshow(item[0][i*4 + j])
-			
-		plt.show()
-		
-		count+=1
-		for i in range(side):
-			for j in range(side):
-				axes[i,j].imshow(tempx[i*side + j])
-		
-		
-		plt.show()
-		#input()
-	'''
 	#Create architecture
 	if args.transfer_learning:
 		nb_classes = args.nb_class
@@ -706,17 +453,14 @@ def run_CNN(args):
 	
 	if args.config:
 		if args.dropout:
-			simple_model = model_from_config((img_size, img_size, num_channels), nb_classes, args.kernel_regularizer, *args.config, *args.dropout, batch_norm=True)
+			simple_model = new_model_from_config((img_size, img_size, num_channels), nb_classes, *args.config)
+			#simple_model = model_from_config((img_size, img_size, num_channels), nb_classes, args.kernel_regularizer, *args.config, *args.dropout, batch_norm=True)
 		else:
-			simple_model = model_from_config((img_size, img_size, num_channels), nb_classes, args.kernel_regularizer, *args.config, batch_norm=True)
+			simple_model = new_model_from_config((img_size, img_size, num_channels), nb_classes, *args.config)
+			#simple_model = model_from_config((img_size, img_size, num_channels), nb_classes, args.kernel_regularizer, *args.config, batch_norm=True)
 	else:
 		simple_model = model((img_size, img_size, num_channels), nb_classes, *args.dropout)
 		
-	'''if args.kernel_regularizer:		
-		for layer in simple_model.layers:
-			if hasattr(layer, 'kernel_regularizer'):
-				layer.kernel_regularizer= regularizers.l2(args.kernel_regularizer)
-	'''
 	
 	simple_model.summary(print_fn = myPrint)
 	
@@ -731,7 +475,8 @@ def run_CNN(args):
 
 	# transferencia de pesos quando o tamanho do softmax muda
 	if args.transfer_learning:
-		tf_model = model_from_config((img_size, img_size, num_channels), num_classes, args.kernel_regularizer, *args.config, *args.dropout, batch_norm=True, dense = args.dense)
+		tf_model = new_model_from_config((img_size, img_size, num_channels), num_classes, *args.config)
+		#tf_model = model_from_config((img_size, img_size, num_channels), num_classes, args.kernel_regularizer, *args.config, *args.dropout, batch_norm=True, dense = args.dense)
 		extra_layers = 0
 		if args.dense:
 			extra_layers = len(args.dense)
