@@ -26,11 +26,17 @@ def find_experiment_nb(wks, name, nb_xp):
 
 	"""
 
-	names = wks.range('Q2:R{}'.format(nb_xp+1))
+	# retrieve data as matrix
+	names = wks.range('Q2:R{}'.format(nb_xp+1), 'matrix')
 
-	x, y = next(((x, y) for (x, row) in enumerate(names) for (y, column) in enumerate(row) if d.value == name), None)
+	if names:
+		# find the corresponding indexes
+		indexes = next(((x, y) for (x, row) in enumerate(names) for (y, cell) in enumerate(row) if cell == name), None)
 
-	return "{} Pesos Experimento {}".format("Melhores" if y == 1 else '', x)
+	if indexes:
+		return "{} Pesos Experimento {}".format("Melhores" if indexes[1] == 1 else '', indexes[0]+1)
+	else:
+		return "n/a"
 
 
 def build_string_from_db_name(name):
@@ -155,6 +161,16 @@ bweights_file, obs=None):
 	for param in args:
 		if param == 'db_info':
 			values[param] = build_string_from_db_name(values[param])
+
+		if param == 'init_info':
+			if values[param].endswith(('.h5', '.hdf5')):
+				values[param] = find_experiment_nb(wks, values[param], nb_xp)
+			elif not values[param]:
+				values[param] = 'Unknown'
+
+		if param == 'arch_info' and not values[param]:
+			values[param] = 'n/a'
+
 		if not (param == 'secret_file' or param == 'gspread_file'):
 			new_row.append(str(values[param]))
 
@@ -164,8 +180,8 @@ bweights_file, obs=None):
 	return
 
 
-def save_infos(nm_script, args, history, best_epoch, test_score, nm_weights,
-nm_weights_best, nm_plot_acc, nm_plot_loss, time_info, out_dir,
+def save_infos(nm_script, args, init, history, best_epoch, test_score, nm_weights,
+nm_weights_best, nm_plot_acc, nm_plot_loss, time_info, out_dir, obs = None,
 file_name = "Experimento", tl=False, ft=False):
 	"""
 	Save information of execution in a text file
@@ -269,15 +285,12 @@ file_name = "Experimento", tl=False, ft=False):
 	shutil.copy(os.path.join("imgs", nm_plot_acc), out_dir)
 	shutil.copy(os.path.join("imgs", nm_plot_loss), out_dir)
 
-	# TODO: find a way to pass an valuable information about initialization
-	# ideias: quando resume_model estiver presente eu posso recuperar as
-	# colunas com os nomes dos arquivos de peso e verificar em qual linha ele está
 	save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
 time_info[0], time_info[2], args.dir, args.dropout, args.epochs,
-args.learning_rate, args.batch_size, args.optimizer, None, None, best_epoch+1,
+args.learning_rate, args.batch_size, args.optimizer, init, args.config, best_epoch+1,
 history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],
 history.history['loss'][best_epoch], history.history['val_loss'][best_epoch],
-nm_weights, nm_weights_best, None)
+nm_weights, nm_weights_best, obs)
 
 	if not tl:
 		with open(experiment_number_file, "w") as output:
