@@ -8,6 +8,31 @@ import re
 
 experiment_number_file = "experiment.txt"
 
+def find_experiment_nb(wks, name, nb_xp):
+	"""
+	 Using the weights file name find the experiment number in the worksheet
+
+	 Args:
+	     wks (pygsheets.Worksheet): Worksheet to look for the name
+		 name (string): Name to look for
+		 nb_xp (int): Current experiment number to limit the search
+
+	 Returns:
+	     int: Experiment number how contains the weights
+		 int: Index which indicates if the weights are the best or not
+
+	 Raises:
+	     None: This function don't raise any exception
+
+	"""
+
+	names = wks.range('Q2:R{}'.format(nb_xp+1))
+
+	x, y = next(((x, y) for (x, row) in enumerate(names) for (y, column) in enumerate(row) if d.value == name), None)
+
+	return "{} Pesos Experimento {}".format("Melhores" if y == 1 else '', x)
+
+
 def build_string_from_db_name(name):
 	"""
 	Helps on turning database name into something more human readable
@@ -245,6 +270,8 @@ file_name = "Experimento", tl=False, ft=False):
 	shutil.copy(os.path.join("imgs", nm_plot_loss), out_dir)
 
 	# TODO: find a way to pass an valuable information about initialization
+	# ideias: quando resume_model estiver presente eu posso recuperar as
+	# colunas com os nomes dos arquivos de peso e verificar em qual linha ele está
 	save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
 time_info[0], time_info[2], args.dir, args.dropout, args.epochs,
 args.learning_rate, args.batch_size, args.optimizer, None, None, best_epoch+1,
