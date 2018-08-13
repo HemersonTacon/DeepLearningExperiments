@@ -34,7 +34,7 @@ def find_experiment_nb(wks, name, nb_xp):
 		indexes = next(((x, y) for (x, row) in enumerate(names) for (y, cell) in enumerate(row) if cell == name), None)
 
 	if indexes:
-		return "{} Pesos Experimento {}".format("Melhores" if indexes[1] == 1 else '', indexes[0]+1)
+		return "{}Pesos Experimento {}".format("Melhores " if indexes[1] == 1 else '', indexes[0]+1)
 	else:
 		return "n/a"
 
@@ -170,6 +170,9 @@ bweights_file, obs=None):
 
 		if param == 'arch_info' and not values[param]:
 			values[param] = 'n/a'
+			
+		if any(_str in param for _str in ['train', 'val']):
+			values[param] = "{:6.4f}".format(values[param])
 
 		if not (param == 'secret_file' or param == 'gspread_file'):
 			new_row.append(str(values[param]))
@@ -182,7 +185,7 @@ bweights_file, obs=None):
 
 def save_infos(nm_script, args, init, history, best_epoch, test_score, nm_weights,
 nm_weights_best, nm_plot_acc, nm_plot_loss, time_info, out_dir, obs = None,
-file_name = "Experimento", tl=False, ft=False):
+file_name = "Experimento", use_app=None):
 	"""
 	Save information of execution in a text file
 
@@ -204,10 +207,8 @@ file_name = "Experimento", tl=False, ft=False):
 				number present in the 'experiment.txt' file in the current
 				directory. If it doesn't exists it will be created and writed
 				to have the value '1'
-		tl (bool): Temporary argument to use this function together with my
-				transfer learning script. Terrible practive, I know. I will
-				change this later.
-		ft (bool): Same as above but to fine tuning script...
+		use_app (string): Used to pass information about training approach used 
+				whitin keras application
 
 
 	Returns:
@@ -240,15 +241,10 @@ file_name = "Experimento", tl=False, ft=False):
 	if args:
 		info+= "Executed {} script with following parameters:\n".format(nm_script)
 		info+= "{}\n\n".format(str(vars(args)))
-	else:
-		info+= "Executed {} script ".format(nm_script)
-		if tl:
-			info+= "in transfer learning mode"
-		if tl and ft:
-			info+= " and "
-		if ft:
-			info+= "in fine tunning mode"
-		info+= "\n\n"
+		if use_app == 'tl':
+			info+= "Obs: showing information about transfer learning phase\n\n"
+		if use_app == 'ft':
+			info+= "Obs: showing information about fine tuning phase\n\n"
 
 	info+= "{:*^50}\n\n".format(" About Created Files ")
 	info+= "              File with model weights: {} \n".format(nm_weights)
@@ -265,16 +261,10 @@ file_name = "Experimento", tl=False, ft=False):
 	for i in range(epochs):
 		info+= "Epoch {}/{}\nloss: {:6.4f} acc: {:6.4f} val_loss: {:6.4f} val_acc: {:6.4f}\n".format(i+1, epochs, history.history['loss'][i], history.history['acc'][i], history.history['val_loss'][i], history.history['val_acc'][i])
 
-
 	out_dir = os.path.join(out_dir, file_name+str(nb_xp))
-	os.mkdir(out_dir)
+	os.makedirs(out_dir)
 
-	if (tl and ft) or args:
-		log_file = os.path.join(out_dir, "log.txt")
-	elif tl:
-		log_file = os.path.join(out_dir, "tl_log.txt")
-	elif ft:
-		log_file = os.path.join(out_dir, "ft_log.txt")
+	log_file = os.path.join(out_dir, "log.txt")
 
 	with open(log_file, "w") as output:
 		output.write(info)
@@ -285,18 +275,26 @@ file_name = "Experimento", tl=False, ft=False):
 	shutil.copy(os.path.join("imgs", nm_plot_acc), out_dir)
 	shutil.copy(os.path.join("imgs", nm_plot_loss), out_dir)
 
-	save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
+	if use_app:
+		save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
+time_info[0], time_info[2], args.dir, args.dropout, args.epochs,
+args.learning_rate, args.batch_size, args.optimizer, init, 'n/a', best_epoch+1,
+history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],
+history.history['loss'][best_epoch], history.history['val_loss'][best_epoch],
+nm_weights, nm_weights_best, obs)
+	else:
+		save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
 time_info[0], time_info[2], args.dir, args.dropout, args.epochs,
 args.learning_rate, args.batch_size, args.optimizer, init, args.config, best_epoch+1,
 history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],
 history.history['loss'][best_epoch], history.history['val_loss'][best_epoch],
 nm_weights, nm_weights_best, obs)
 
-	if not tl:
-		with open(experiment_number_file, "w") as output:
-			# Updating number of experiments
-			nb_xp+=1
-			output.write(str(nb_xp))
+
+	with open(experiment_number_file, "w") as output:
+		# Updating number of experiments
+		nb_xp+=1
+		output.write(str(nb_xp))
 
 
 
