@@ -126,16 +126,11 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train
 
 	return score, hist, model_name, checkpoint_path
 
-def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_channel = 3):
-
-	# dictionaries to save informations about executions
-	tl_infos, ft_infos = {}, {}
+def load_dataset(num_channels, indir, net_model):
 
 	###############################################
 	############## Preparing Dataset ##############
 	###############################################
-
-	num_channels = nb_channel
 
 	# loading dataset and getting the samples amount of each set
 	dir_train, dir_valid, dir_test = get_dirs(indir)
@@ -153,16 +148,20 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_chann
 	train_datagen = ImageDataGenerator(rescale=1./255, zoom_range=0.2, horizontal_flip=True, vertical_flip=True)
 	train_gen = train_datagen.flow_from_directory(dir_train, target_size = (img_size, img_size), batch_size = bs, class_mode = 'categorical')
 
+	valid_datagen = ImageDataGenerator(rescale=1./255)
+	valid_gen = valid_datagen.flow_from_directory(dir_valid, target_size = (img_size, img_size), batch_size = bs, class_mode = 'categorical')
+
 	try:
 		test_datagen = ImageDataGenerator(rescale=1./255)
 		test_gen = test_datagen.flow_from_directory(dir_test, target_size = (img_size, img_size), batch_size = bs, class_mode = 'categorical')
 	except:
 		test_gen = None
 
-	valid_datagen = ImageDataGenerator(rescale=1./255)
-	valid_gen = valid_datagen.flow_from_directory(dir_valid, target_size = (img_size, img_size), batch_size = bs, class_mode = 'categorical')
-
 	print('Dataset loaded.')
+
+	return num_classes, img_size, train_gen, valid_gen, test_gen, num_train, num_valid, num_test
+
+def app_model(img_size, num_channels, net_model, dense, dpout, rm):
 
 	###############################################
 	############### Preparing Model ###############
@@ -191,6 +190,17 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_chann
 	if rm:
 		model.load_weights(rm)
 
+	return base_model, model
+
+def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_channel = 3):
+
+	# dictionaries to save informations about executions
+	tl_infos, ft_infos = {}, {}
+
+	num_classes, img_size, train_gen, valid_gen, test_gen, num_train, num_valid, num_test = load_dataset(nb_channel, indir, net_model)
+
+	base_model, model = app_model(img_size, nb_channel, net_model, dense, dpout, rm)
+
 	###############################################
 	############### Training phases ###############
 	###############################################
@@ -207,7 +217,7 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_chann
 		names = plot_and_save(hist, name_weights, False)
 		idx = print_best_acc(hist)
 
-		tl_infos = {'hist':hist, 'idx': idx, 'score': score, 'weights': [name_weights, name_weights_best], 'plots': names, 'time': [start, end, time_formated]}
+		tl_infos = {'hist': hist, 'idx': idx, 'score': score, 'weights': [name_weights, name_weights_best], 'plots': names, 'time': [start, end, time_formated]}
 
 	#fine tuning phase
 	if ft:
@@ -221,7 +231,7 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_chann
 		names = plot_and_save(hist, name_weights, False)
 		idx = print_best_acc(hist)
 
-		ft_infos = {'hist':hist, 'idx': idx, 'score': score, 'weights': [name_weights, name_weights_best], 'plots': names, 'time': [start, end, time_formated]}
+		ft_infos = {'hist': hist, 'idx': idx, 'score': score, 'weights': [name_weights, name_weights_best], 'plots': names, 'time': [start, end, time_formated]}
 
 	return tl_infos, ft_infos, img_size
 
