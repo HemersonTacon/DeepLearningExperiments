@@ -170,7 +170,7 @@ bweights_file, obs=None):
 
 		if param == 'arch_info' and not values[param]:
 			values[param] = 'n/a'
-			
+
 		if any(_str in param for _str in ['train', 'val']):
 			values[param] = "{:6.4f}".format(values[param])
 
@@ -192,6 +192,7 @@ file_name = "Experimento", use_app=None):
 	Args:
 	    nm_script (string): Executed script name
 		args (dict): Dictionary with all arguments passed to the informed script
+		init (string): Initialization method name or weights file name
 		history (Hisotry): The History object returned from a fit function
 		best_epoch (int): Number of epoch of best results (higher val acc)
 		test_score (string): Results on testing set (when present)
@@ -207,7 +208,7 @@ file_name = "Experimento", use_app=None):
 				number present in the 'experiment.txt' file in the current
 				directory. If it doesn't exists it will be created and writed
 				to have the value '1'
-		use_app (string): Used to pass information about training approach used 
+		use_app (string): Used to pass information about training approach used
 				whitin keras application
 
 
@@ -240,11 +241,16 @@ file_name = "Experimento", use_app=None):
 	info+= "{:*^50}\n\n".format(" About Script and Parameters ")
 	if args:
 		info+= "Executed {} script with following parameters:\n".format(nm_script)
-		info+= "{}\n\n".format(str(vars(args)))
+		if use_app == 'grid_ft':
+			info+= "{}\n\n".format(args)
+		else:
+			info+= "{}\n\n".format(str(vars(args)))
 		if use_app == 'tl':
 			info+= "Obs: showing information about transfer learning phase\n\n"
-		if use_app == 'ft':
+		elif use_app == 'ft':
 			info+= "Obs: showing information about fine tuning phase\n\n"
+		elif use_app == 'grid_ft':
+			info+= "Obs: showing information about grid fine tuning\n\n"
 
 	info+= "{:*^50}\n\n".format(" About Created Files ")
 	info+= "              File with model weights: {} \n".format(nm_weights)
@@ -276,7 +282,15 @@ file_name = "Experimento", use_app=None):
 	shutil.copy(os.path.join("imgs", nm_plot_loss), out_dir)
 
 	if use_app:
-		save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
+		if use_app == 'grid_ft':
+			save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
+time_info[0], time_info[2], args['dir'], args['dropout'], args['epochs'],
+args['learning_rate'], args['batch_size'], args['optimizer'], init, 'n/a', best_epoch+1,
+history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],
+history.history['loss'][best_epoch], history.history['val_loss'][best_epoch],
+nm_weights, nm_weights_best, obs)
+		else:
+			save_on_gsheet('client_secret.json', 'Experimentos Titan UCF101', nb_xp,
 time_info[0], time_info[2], args.dir, args.dropout, args.epochs,
 args.learning_rate, args.batch_size, args.optimizer, init, 'n/a', best_epoch+1,
 history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],

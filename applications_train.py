@@ -1,10 +1,12 @@
 #Keras import
 from keras.applications import InceptionV3, DenseNet121, Xception, ResNet50, InceptionResNetV2
 from keras.optimizers import Adam, SGD, RMSprop
-from keras.callbacks import CSVLogger, ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import CSVLogger, ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
 from keras.preprocessing.image import ImageDataGenerator
 from keras.layers import Dense, Flatten, BatchNormalization, Dropout, Activation
 from keras.models import Model
+import keras.backend as K
+from keras.regularizers import l1_l2
 
 # my scripts import
 from simpleModel import get_dirs, formatTime, plot_and_save, print_best_acc, handle_opt_params
@@ -50,6 +52,7 @@ def get_network(network):
 	sizes = {'inceptionv3':InceptionV3, 'densenet':DenseNet121, 'xception':Xception, 'resnet50':ResNet50, 'inceptionresnetv2':InceptionResNetV2, 'squeezenet':None}
 
 	return sizes[network]
+
 def my_schedule(total_epoch):
 	def schedule(epoch, lr):
 		# diminui o alfa em 10 vezes quando chega nas epocas 100 e 200
@@ -73,10 +76,11 @@ def transfer_learning_train(net_name, base_model, model, train_gen, test_gen, va
 	csv_logger = CSVLogger('log_transfer_learning.csv', append=True, separator=';')
 	checkpoint_path = 'transfer_learning_{}_best_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
 	best_acc = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=0, save_best_only=True, save_weights_only=False, mode='auto', period=1)
+	early_stopper = EarlyStopping(monitor='val_acc', patience=30)
 
 	# training
 	print("Transfer learning")
-	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs, epochs=eps, callbacks=[csv_logger, best_acc], validation_data=valid_gen, validation_steps=num_valid//bs, shuffle=True)
+	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs, epochs=eps, callbacks=[best_acc, early_stopper], validation_data=valid_gen, validation_steps=num_valid//bs, shuffle=True)
 
 	if test_gen:
 		score = simple_model.evaluate_generator(test_gen, steps=num_test//bs)
@@ -88,12 +92,25 @@ def transfer_learning_train(net_name, base_model, model, train_gen, test_gen, va
 	model_name = 'transfer_learning_{}_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
 	model.save_weights(model_name)
 
+	K.clear_session()
+
 	return model, score, hist, model_name, checkpoint_path
 
-def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train, num_valid, num_test, lr, bs, eps, all=False):
+def set_kernel_reg(model, lambdal1 = 0, lambdal2 = 0):
+
+	for layer in model.layers:
+		if hasattr(layer, 'kernel_regularizer'):
+			layer.kernel_regularizer = l1_l2(l1 = lambdal1, l2 = lambdal2)
+
+	return model
+
+def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train, num_valid, num_test, lr, bs, eps, all=False, lambdal1=0, lambdal2=0):
 
 	#TODO: implement parameter to allow train in just some modules of models
 	#layers_to_keep_freeze = {'inceptionv3':249, 'densenet':249, 'xception':249, 'resnet50':249, 'inceptionresnetv2':249, 'squeezenet':249}
+
+	if type(bs) == float:
+		bs = int(bs)
 
 	if all:
 		for layer in model.layers:
@@ -103,6 +120,9 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train
 			layer.trainable = False
 		for layer in model.layers[layers_to_keep_freeze[net_name]:]:
 			layer.trainable = True'''
+	# set kernel regularization
+	if lambdal1 or lambdal2:
+		model = set_kernel_reg(model, lambdal1, lambdal2)
 
 	model.compile(optimizer=SGD(lr=lr, momentum=0.9), loss='categorical_crossentropy', metrics=['accuracy'])
 
@@ -111,8 +131,11 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train
 	checkpoint_path = 'fine_tuning_{}_best_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
 	best_acc = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=0, save_best_only=True, save_weights_only=False, mode='auto', period=1)
 	lrs = LearningRateScheduler(my_schedule(eps), verbose=0)
+	# Helper: Stop when we stop learning.
+	early_stopper = EarlyStopping(monitor='val_acc', patience=25)
+	reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=10, min_lr=1e-6)
 
-	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs, epochs=eps, callbacks=[csv_logger, best_acc], validation_data=valid_gen, validation_steps=num_valid//bs, shuffle=True)
+	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs, epochs=eps, callbacks=[best_acc, early_stopper, reduce_lr], validation_data=valid_gen, validation_steps=num_valid//bs, shuffle=True)
 
 	if test_gen:
 		score = simple_model.evaluate_generator(test_gen, steps=num_test//bs)
@@ -124,9 +147,11 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen, num_train
 	model_name = 'fine_tuning_{}_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
 	model.save_weights(model_name)
 
+	K.clear_session()
+
 	return score, hist, model_name, checkpoint_path
 
-def load_dataset(num_channels, indir, net_model):
+def load_dataset(bs, indir, net_model):
 
 	###############################################
 	############## Preparing Dataset ##############
@@ -157,11 +182,11 @@ def load_dataset(num_channels, indir, net_model):
 	except:
 		test_gen = None
 
-	print('Dataset loaded.')
+	print('Dataset loaded')
 
 	return num_classes, img_size, train_gen, valid_gen, test_gen, num_train, num_valid, num_test
 
-def app_model(img_size, num_channels, net_model, dense, dpout, rm):
+def app_model(img_size, num_channels, net_model, dense, dpout, num_classes, rm=None):
 
 	###############################################
 	############### Preparing Model ###############
@@ -175,6 +200,12 @@ def app_model(img_size, num_channels, net_model, dense, dpout, rm):
 
 	if dense and dpout:
 		count = 0
+		# assure the right type will be passed
+		if not type(dense) == list:
+			dense = list(map(int,[dense]))
+		if not type(dpout) == list:
+			dpout = list(map(int,[dpout]))
+
 		for units, rate in zip(dense, dpout):
 
 			X = Dense(units, use_bias=False, name='extra_dense{}'.format(count))(X)
@@ -197,9 +228,9 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all, nb_chann
 	# dictionaries to save informations about executions
 	tl_infos, ft_infos = {}, {}
 
-	num_classes, img_size, train_gen, valid_gen, test_gen, num_train, num_valid, num_test = load_dataset(nb_channel, indir, net_model)
+	num_classes, img_size, train_gen, valid_gen, test_gen, num_train, num_valid, num_test = load_dataset(bs, indir, net_model)
 
-	base_model, model = app_model(img_size, nb_channel, net_model, dense, dpout, rm)
+	base_model, model = app_model(img_size, nb_channel, net_model, dense, dpout, num_classes, rm)
 
 	###############################################
 	############### Training phases ###############
@@ -241,6 +272,9 @@ def _main(args):
 
 def create_obs(net_model, img_size, dense, dropout, transferlearning, finetuning, all_layers):
 
+	if not type(dense)==list:
+		dense = [dense]
+
 	obs = "Usada {} com entrada {}".format(net_model, img_size)
 	if  dense:
 		obs += " e {} camadas densas {}".format(len(dense), dense)
@@ -249,7 +283,7 @@ def create_obs(net_model, img_size, dense, dropout, transferlearning, finetuning
 	obs += "\nRealizada etapa de"
 	if transferlearning:
 		obs += " transfer learning"
-	if transferlearning and  finetuning:
+	if transferlearning and finetuning:
 		obs += " e"
 	if finetuning:
 		obs += " fine tunning"
