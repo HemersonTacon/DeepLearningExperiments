@@ -4,6 +4,7 @@ import pygsheets
 import inspect
 import numpy as np
 import re
+import httplib2
 
 
 experiment_number_file = "experiment.txt"
@@ -94,13 +95,13 @@ def build_string_from_db_name(name):
 	# get the size of filter when gaussian is used
 	size_re = re.compile(r'(Size|SZ)_(\d+)', re.I)
 	result = size_re.search(name)
-	if result.group(2):
+	if result and result.group(2):
 		string_info += 'Size {}\n'.format(result.group(2))
 
 	# get the variance of filter when gaussian is used
 	sigma_re = re.compile(r'(Sigma|SG)_(\d+)', re.I)
 	result = sigma_re.search(name)
-	if result.group(2):
+	if result and result.group(2):
 		string_info += 'Sigma {}\n'.format(result.group(2))
 
 	return string_info
@@ -147,8 +148,10 @@ bweights_file, obs=None):
 
 	 """
 
+	# workaround approach to fix timeout issue
+	http_client = httplib2.Http(timeout=50)
 	# authenticates and open the worksheet
-	gc = pygsheets.authorize(outh_file=secret_file)
+	gc = pygsheets.authorize(outh_file=secret_file, retries=5, http_client=http_client)
 	sh = gc.open(gspread_file)
 	wks = sh.sheet1
 
@@ -267,19 +270,31 @@ file_name = "Experimento", use_app=None):
 	for i in range(epochs):
 		info+= "Epoch {}/{}\nloss: {:6.4f} acc: {:6.4f} val_loss: {:6.4f} val_acc: {:6.4f}\n".format(i+1, epochs, history.history['loss'][i], history.history['acc'][i], history.history['val_loss'][i], history.history['val_acc'][i])
 
-	out_dir = os.path.join(out_dir, file_name+str(nb_xp))
-	os.makedirs(out_dir)
+	created = False
+	while(not created):
+		try:
+			outdir = os.path.join(out_dir, file_name+str(nb_xp))
+			os.makedirs(outdir)
+			created = True
+			print("Folder {} succesfully created!".format(outdir))
+		except FileExistsError:
+			print("Folder {} already exists\n Trying to create with the next experiment number...".format(outdir))
+			nb_xp+=1
 
-	log_file = os.path.join(out_dir, "log.txt")
+	log_file = os.path.join(outdir, "log.txt")
 
 	with open(log_file, "w") as output:
 		output.write(info)
 
 	# copying created files
-	shutil.copy(nm_weights, out_dir)
-	shutil.copy(nm_weights_best, out_dir)
-	shutil.copy(os.path.join("imgs", nm_plot_acc), out_dir)
-	shutil.copy(os.path.join("imgs", nm_plot_loss), out_dir)
+	shutil.copy(nm_weights, outdir)
+	shutil.copy(nm_weights_best, outdir)
+	shutil.copy(os.path.join("imgs", nm_plot_acc), outdir)
+	shutil.copy(os.path.join("imgs", nm_plot_loss), outdir)
+
+	with open(experiment_number_file, "w") as output:
+		# Updating number of experiments
+		output.write(str(nb_xp+1))
 
 	if use_app:
 		if use_app == 'grid_ft':
@@ -303,12 +318,6 @@ args.learning_rate, args.batch_size, args.optimizer, init, args.config, best_epo
 history.history['acc'][best_epoch], history.history['val_acc'][best_epoch],
 history.history['loss'][best_epoch], history.history['val_loss'][best_epoch],
 nm_weights, nm_weights_best, obs)
-
-
-	with open(experiment_number_file, "w") as output:
-		# Updating number of experiments
-		nb_xp+=1
-		output.write(str(nb_xp))
 
 
 
