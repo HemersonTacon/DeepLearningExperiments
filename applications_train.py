@@ -143,7 +143,7 @@ def set_kernel_reg(model, lambdal1 = 0, lambdal2 = 0):
 
 def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen,
 						num_train, num_valid, num_test, lr, bs, eps, all=False,
-						lambdal1=0, lambdal2=0):
+						lambdal1=0, lambdal2=0, metric = 'val_acc'):
 
 	#TODO: implement parameter to allow train in just some modules of models
 	#layers_to_keep_freeze = {'inceptionv3':249, 'densenet':249, 'xception':249, 'resnet50':249, 'inceptionresnetv2':249, 'squeezenet':249}
@@ -169,21 +169,26 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen,
 	# callback to save the progress on csv and save best weights on h5 file
 	csv_logger = CSVLogger('log_transfer_learning.csv', append=True, separator=';')
 	checkpoint_path = 'fine_tuning_{}_best_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
-	best_acc = ModelCheckpoint(checkpoint_path, monitor='val_acc', verbose=0,
+	best_acc = ModelCheckpoint(checkpoint_path, monitor=metric, verbose=0,
 			save_best_only=True, save_weights_only=False, mode='auto', period=1)
 	lrs = LearningRateScheduler(my_schedule(eps), verbose=0)
 	# Helper: Stop when we stop learning.
-	early_stopper = EarlyStopping(monitor='val_acc', patience=25)
-	reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2,
-									patience=10, min_lr=1e-6)
+	early_stopper = EarlyStopping(monitor=metric, patience=10)
+	reduce_lr = ReduceLROnPlateau(monitor=metric, factor=0.1,
+									patience=5, min_lr=1e-6)
 
-	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-								epochs=eps, callbacks=[best_acc, lrs],
-								validation_data=valid_gen,
-								validation_steps=num_valid//bs, shuffle=True)
+	if valid_gen:
+		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
+									epochs=eps, callbacks=[best_acc, lrs],
+									validation_data=valid_gen,
+									validation_steps=num_valid//bs, shuffle=True)
+	else:
+		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
+									epochs=eps, callbacks=[best_acc, lrs],
+									shuffle=True)
 
 	if test_gen:
-		score = simple_model.evaluate_generator(test_gen, steps=num_test//bs)
+		score = model.evaluate_generator(test_gen, steps=num_test//bs)
 	else:
 		score = "No set to test"
 
@@ -263,10 +268,6 @@ def get_img_fit_flow(image_config, fit_sample_size, flow_dir_config):
 	if 'featurewise_center' in image_config and image_config['featurewise_center']:
 		new_img_gen.mean = mean
 
-
-	print("\n\n ****Settings:\n")
-	pprint(vars(new_img_gen))
-
 	# unpack the necessary ones
 	return new_img_gen.flow_from_directory(**flow_dir_config), stdev, mean
 
@@ -304,19 +305,21 @@ def load_dataset(bs, indir, net_model, center = True,
 					class_mode = 'categorical')
 
 
+	try:
+		if center or std_norm:
+			valid_datagen = ImageDataGenerator(featurewise_center = True,
+							featurewise_std_normalization = True)
+			valid_datagen.mean = mean
+			if std_norm:
+				valid_datagen.std = stdev
+		else:
+			valid_datagen = ImageDataGenerator(rescale=1./255)
 
-	if center or std_norm:
-		valid_datagen = ImageDataGenerator(featurewise_center = True,
-						featurewise_std_normalization = True)
-		valid_datagen.mean = mean
-		if std_norm:
-			valid_datagen.std = stdev
-	else:
-		valid_datagen = ImageDataGenerator(rescale=1./255)
-
-	valid_gen = valid_datagen.flow_from_directory(dir_valid,
-				target_size = (img_size, img_size), batch_size = bs,
-				class_mode = 'categorical')
+		valid_gen = valid_datagen.flow_from_directory(dir_valid,
+					target_size = (img_size, img_size), batch_size = bs,
+					class_mode = 'categorical')
+	except:
+		valid_gen = None
 
 	try:
 		if center or std_norm:
@@ -326,7 +329,7 @@ def load_dataset(bs, indir, net_model, center = True,
 			if std_norm:
 				test_datagen.std = stdev
 		else:
-			test_gen = ImageDataGenerator(rescale=1./255)
+			test_datagen = ImageDataGenerator(rescale=1./255)
 
 		test_gen = test_datagen.flow_from_directory(dir_test,
 					target_size = (img_size, img_size), batch_size = bs,
@@ -432,14 +435,14 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all,
 		(score, hist, name_weights,
 		name_weights_best) = fine_tuning_train(net_model, model, train_gen,
 								test_gen, valid_gen, num_train, num_valid,
-								num_test, lr, bs, eps, all, l1, l2)
+								num_test, lr, bs, eps, all, l1, l2, metric='loss')
 
 		t = time.time()
 		end = time.strftime("%d/%b/%Y %H:%M:%S", time.localtime())
 		time_formated = str(dt.timedelta(seconds=t-s))
 
 		names = plot_and_save(hist, name_weights, False)
-		idx = print_best_acc(hist)
+		idx = print_best_acc(hist, metric='loss')
 
 		ft_infos = {'hist': hist, 'idx': idx, 'score': score,
 					'weights': [name_weights, name_weights_best],
@@ -474,7 +477,7 @@ def _main(args):
 def create_obs(net_model, img_size, dense, dropout, transferlearning,
 				finetuning, all_layers):
 
-	if not type(dense)==list:
+	if dense and not type(dense)==list:
 		dense = [dense]
 
 	obs = "Usada {} com entrada {}".format(net_model, img_size)
@@ -515,9 +518,9 @@ if __name__ == '__main__':
 
 	# check OS to save in right place
 	if platform.system() == 'Windows':
-		outdir = "G:\\Meu Drive\\Mestrado\\Experimentos Titan\\UCF101"
+		outdir = "D:\\keras_Examples\\Resutados temp\\TestDataset"
 	else:
-		outdir = "Experimentos/UCF101"
+		outdir = "Experimentos/UCF11"
 
 	obs = create_obs(args.net_model, img_size, args.dense, args.dropout,
 						args.transferlearning, args.finetuning, args.all)
