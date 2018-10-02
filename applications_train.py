@@ -23,6 +23,11 @@ import datetime as dt
 import platform
 import re
 from packaging import version
+import random as rn
+
+os.environ['PYTHONHASHSEED'] = '0'
+np.random.seed(42)
+rn.seed(12345)
 
 def da_regex(s, pat=re.compile(r"(hf|vf|zoom_0.(\d+))")):
 	if not pat.match(s):
@@ -179,12 +184,12 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen,
 
 	if valid_gen:
 		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-									epochs=eps, callbacks=[best_acc, lrs],
+									epochs=eps, callbacks=[best_acc, early_stopper],
 									validation_data=valid_gen,
 									validation_steps=num_valid//bs, shuffle=True)
 	else:
 		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-									epochs=eps, callbacks=[best_acc, lrs],
+									epochs=eps, callbacks=[best_acc, early_stopper],
 									shuffle=True)
 
 	if test_gen:
