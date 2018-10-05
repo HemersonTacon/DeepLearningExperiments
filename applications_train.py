@@ -110,12 +110,14 @@ class tta_callback(Callback):
 
 		try:
 			with open("cnn_remote_command.txt", "r") as f:
-				f.readline().split()[0]
+				cmd = f.readline().split()[0]
 				if cmd.lower() in self.commands:
 					print("Stoppig training by external command")
 					self.model.stop_training = True
+				else:
+					print("No command found. Continuing the training")
 		except Exception as e:
-			pass
+				print("Failed to read command: {}".format(e))
 
 	def on_train_end(self, logs=None):
 
