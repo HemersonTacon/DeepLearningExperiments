@@ -7,7 +7,6 @@ from keras.models import load_model, Model
 from keras.layers import Dense, Activation
 from keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
 import re
-from applications_train import get_img_fit_flow
 from keras import backend as K
 
 class TTA_Model():
@@ -19,27 +18,34 @@ class TTA_Model():
 
     """
 
-    def __init__(self, model, n, mean = None, std = None, bf_soft = False):
+    def __init__(self, model, n, mean = None, std = None, bf_soft = False,
+                    exclude_outliers = 0):
         self.model = model
         self.n = n
         self.mean = mean
         self.std = std
         self.bf_soft = bf_soft
         self.function_bf_soft = None
+        self.exclude_outliers = exclude_outliers
         if self.bf_soft:
             self.function_bf_soft = self.get_before_softmax()
 
     def get_before_softmax(self):
         """Remake the last dense layer to get access to
         activation before softmax be applied"""
-        temp = self.model.layers[-2].output
-        temp = Dense(self.model.layers[-1].output.shape[1]._value, name = "new_dense")(temp)
-        preds = Activation('softmax', name = "new_activation")(temp)
+        if self.model:
+            temp = self.model.layers[-2].output
+            temp = Dense(self.model.layers[-1].output.shape[1]._value, name = "new_dense")(temp)
+            preds = Activation('softmax', name = "new_activation")(temp)
 
-        new_model = Model(inputs = self.model.input, outputs = preds)
-        new_model.layers[-2].set_weights(self.model.layers[-1].get_weights())
+            new_model = Model(inputs = self.model.input, outputs = preds)
+            new_model.layers[-2].set_weights(self.model.layers[-1].get_weights())
+            #self.set_model(new_model)
 
-        return K.function([new_model.layers[0].input], [new_model.layers[-2].output])
+            return K.function([new_model.layers[0].input], [new_model.layers[-2].output])
+
+    def set_exclude_outliers(self, n):
+        self.exclude_outliers = n
 
     def set_model(self, model):
         self.model = model
@@ -48,6 +54,7 @@ class TTA_Model():
     def set_bf_soft(self):
         if self.bf_soft:
             self.function_bf_soft = self.get_before_softmax()
+            #self.get_before_softmax()
 
     def set_n(self, n):
         self.n = n
@@ -58,11 +65,32 @@ class TTA_Model():
     def set_std(self, std):
         self.std = std
 
+    def remove_outliers(self, preds):
+
+        if (self.outliers > 0):
+            if (len(preds.shape) == 3 and preds.shape[0] == 1):
+                preds = preds.reshape((preds.shape[1], preds.shape[2]))
+
+            max_list = [{'value':np.max(pred), 'idx':idx} for idx, pred in enumerate(preds)]
+
+            max_list = sorted(max_list, key = lambda k: k['value'])
+
+            for i in range(self.exclude_outliers):
+                if (i % 2 == 0):
+                    # delete the top maximum
+                    del preds[max_list[i]['idx']]
+                else:
+                    # delete the bottom maximum
+                    del preds[max_list[-(i+1)]['idx']]
+
+        return preds
+
+    def check_label(self, pred, idx):
+
+        return self.class_indices[self.ground_truth[idx]] == np.argmax(pred)
+
     def predict_on_loaded_files(self):
 
-        def check_label(pred, idx):
-
-            return self.class_indices[self.ground_truth[idx]] == np.argmax(pred)
 
         final_score = []
         for idx in range(self.num_samples//self.n):
@@ -76,32 +104,29 @@ class TTA_Model():
                     img = img_to_array(img)/255.0
                 imgs.append(img)
             pred = self.predict(np.array(imgs))
-            final_score.append(check_label(pred, idx))
+            final_score.append(self.check_label(pred, idx))
 
         return np.mean(final_score)
 
     def predict(self, X):
         """Wraps the predict method of the provided model.
-        Augments the testdata with horizontal and vertical flips and
-        averages the results.
+
         Args:
             X (numpy array or directory name): The data to get predictions for
-                                or the directory where the data cna be found
+                                or the directory where the data can be found
         """
-
-        def check_label(pred, idx):
-
-            return self.class_indices[self.ground_truth[idx]] == np.argmax(pred)
 
         pred = []
         if(type(X) == np.ndarray):
             for idx in range(0, len(X), self.n):
                 if self.bf_soft:
                     total = self.function_bf_soft([X[idx:idx+self.n]])
-                    pred.append(np.mean(total, axis=(0,1)))
                 else:
                     total = self.model.predict(X[idx:idx+self.n], batch_size = self.n)
-                    pred.append(np.mean(total, axis=0))
+
+                total = self.exclude_outliers(total)
+                pred.append(np.mean(total, axis=0))
+
             return np.array(pred)
 
         elif(type(X) == str):
@@ -138,7 +163,7 @@ class TTA_Model():
             self.num_classes = len(classes)
             self.class_indices = dict(zip(classes, range(len(classes))))
 
-            print("Found {} images augmented in {} times belonging to {} classes".format(self.num_samples//self.n,
+            print("Found {} images augmented {} times belonging to {} classes".format(self.num_samples//self.n,
                         self.n, self.num_classes))
 
             for idx in range(self.num_samples//self.n):
@@ -152,7 +177,7 @@ class TTA_Model():
                         img = img_to_array(img)/255.0
                     imgs.append(img)
                 pred = self.predict(np.array(imgs))
-                final_score.append(check_label(pred, idx))
+                final_score.append(self.check_label(pred, idx))
 
             return np.mean(final_score)
 
@@ -164,7 +189,7 @@ class TTA_Model():
 
 
 def unit_test_predict():
-
+    from applications_train import get_img_fit_flow
     center = True
     model_file = "/home/gcgic/Downloads/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1536816640.1023815.h5"
     dataset = "/home/gcgic/Documents/Hemerson/Datasets/UCF11/UCF11_sampled_from_101_VR_Gaussian_H_RGB_sz_99_sg_33_split1_augmented_4/valid/HorseRiding"
@@ -215,6 +240,7 @@ def unit_test_predict():
     print("SUCCESS! :D") if sum([format(a, '.6f')==format(b, '.6f') for a,b in zip(*preds,*preds_tta)]) == len(*preds) else print("FAILURE :'(")
 
 def db_test_predict():
+    from applications_train import get_img_fit_flow
     center = True
     model_file = "/home/gcgic/Downloads/fine_tuning_resnet50_best_lrate0.001_bsize64_epochs1000_1536810325.2233403.h5"
     dataset = "/home/gcgic/Documents/Hemerson/Datasets/UCF11/UCF11_sampled_from_101_VR_Gaussian_H_RGB_sz_99_sg_33_split1_augmented_1/valid"
@@ -250,6 +276,7 @@ def db_test_predict():
     print("Score from evaluate: {}".format(score))
 
 def exp_test_predict():
+    from applications_train import get_img_fit_flow
     model_file = {
                     4:{
                         1:{
@@ -347,3 +374,124 @@ def exp_test_predict():
     print("\n**** General difference mean per window: \n{}".format(np.mean(diff, axis=(1,2))))
     print("\n**** General diferrence mean per model: \n{}".format(np.mean(diff, axis=(0,2))))
     print("\n**** General diferrence mean per windows and model: \n{}".format(np.mean(diff, axis=(2))))
+
+def exp_test_predict101():
+    from applications_train import get_img_fit_flow
+    model_file = {
+                    4:{
+                        # 'resnet50':{
+                        #             1:{
+                        #                 240:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537929486.7611394.h5",
+                        #                 241:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537940432.5365655.h5",
+                        #                 242:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537952434.4005418.h5",
+                        #             },
+                        #             2:{
+                        #                 243:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537964296.0066204.h5",
+                        #                 244:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537975043.6737926.h5",
+                        #                 245:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537982274.0607374.h5",
+                        #             },
+                        #             3:{
+                        #                 246:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537989178.0348685.h5",
+                        #                 247:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537994134.8487825.h5",
+                        #                 248:"/home/gcgic/Documents/Hemerson/fine_tuning_resnet50_best_lrate0.001_bsize16_epochs1000_1537999081.2091162.h5",
+                        #             }
+                        # },
+                        'inceptionv3':{
+                                    1:{
+                                        249:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538011975.9522138.h5",
+                                        250:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538019503.8924916.h5",
+                                        251:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538026600.6237442.h5",
+                                    },
+                                    2:{
+                                        252:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538033663.552778.h5",
+                                        253:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538040755.9879205.h5",
+                                        254:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538047855.8792114.h5",
+                                    },
+                                    3:{
+                                        255:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538054983.460529.h5",
+                                        256:"/home/gcgic/Documents/Hemerson/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538062023.4726079.h5",
+                                    }
+                        }
+                    }
+                }
+
+    dataset = {4:"/home/gcgic/Documents/Hemerson/Datasets/UCF101/UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_4/valid"}
+
+    first = True
+    tta = None
+    res_tta = []
+    normal_res = []
+    for windows in model_file.keys():
+
+        print("************\n\nAccuracy for dataset augmented in {} windows\n\n************".format(windows))
+
+        flow_dir = {'directory': os.path.join(os.path.split(dataset[windows])[0], 'training'), 'target_size': (224, 224),
+                'batch_size': 25, 'class_mode': 'categorical'}
+        data_aug = {'featurewise_center': True, 'featurewise_std_normalization': True}
+        _, stdev, mean = 0,1,0#get_img_fit_flow(data_aug, 1, flow_dir)
+        datagen = ImageDataGenerator(featurewise_center = True,
+                        featurewise_std_normalization = True)
+        datagen.mean = mean
+        datagen.std = stdev
+
+        samples = sum([len(files) for r, d, files in os.walk(dataset[windows])])
+
+        tta_per_bs_model = []
+        normal_per_bs_model = []
+
+        for base_model in model_file[windows].keys():
+            print("************\n\nBase Model {}\n\n************".format(base_model))
+            tta_per_model_cfg = []
+            normal_per_model_cfg = []
+
+            for model_cfg in model_file[windows][base_model].keys():
+                print("************\n\nModel Configuration {}\n\n************".format(model_cfg))
+                tta_per_exp = []
+                normal_per_exp = []
+
+                for exp in model_file[windows][base_model][model_cfg].keys():
+                    print("************\n\nExperiment {}\n\n************".format(exp))
+                    model = load_model(model_file[windows][base_model][model_cfg][exp])
+                    if first:
+                        tta = TTA_Model(model, windows, mean = mean, std = stdev, bf_soft = True)
+                        first = False
+                        preds_tta = tta.predict(dataset[windows])
+                    else:
+                        tta.set_model(model)
+                        preds_tta = tta.predict_on_loaded_files()
+
+
+                    print("Accuracy using TTA: {}".format(preds_tta))
+
+                    generator = datagen.flow_from_directory(dataset[windows], target_size = (224, 224), color_mode='rgb', batch_size = 4, class_mode = 'categorical', shuffle=False)
+                    model.compile(optimizer='sgd', loss='categorical_crossentropy', metrics=['accuracy'])
+                    score = model.evaluate_generator(generator, samples // 4)
+                    print("Metrics names:       {}".format(model.metrics_names))
+                    print("Score from evaluate: {}".format(score))
+
+                    print("Using TTA the prediction increased {:05.4f}%".format(100*(preds_tta-score[1])))
+
+                    tta_per_exp.append(preds_tta)
+                    normal_per_exp.append(score[1])
+                    K.clear_session()
+
+                tta_per_model_cfg.append(tta_per_exp)
+                normal_per_model_cfg.append(normal_per_exp)
+
+            tta_per_bs_model.append(tta_per_model_cfg)
+            normal_per_bs_model.append(normal_per_model_cfg)
+        first = True
+        res_tta.append(tta_per_bs_model)
+        normal_res.append(normal_per_bs_model)
+
+
+
+    diff = np.array(res_tta) - np.array(normal_res)
+
+    print("\n**** All differences: \n{}".format(diff))
+
+    print("\n**** General difference mean per window: \n{}".format(np.mean(diff, axis=(1,2,3))))
+    print("\n**** General diferrence mean per base model: \n{}".format(np.mean(diff, axis=(0,2,3))))
+    print("\n**** General diferrence mean per model configuration: \n{}".format(np.mean(diff, axis=(0,1,3))))
+
+    return diff
