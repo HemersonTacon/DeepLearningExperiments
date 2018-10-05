@@ -1,18 +1,19 @@
 #Keras import
 from keras.applications import InceptionV3, DenseNet121, Xception, ResNet50, InceptionResNetV2
 from keras.optimizers import Adam, SGD, RMSprop
-from keras.callbacks import CSVLogger, ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau
+from keras.callbacks import CSVLogger, ModelCheckpoint, LearningRateScheduler, EarlyStopping, ReduceLROnPlateau, Callback
 from keras.preprocessing.image import ImageDataGenerator
 from keras.layers import Dense, Flatten, BatchNormalization, Dropout, Activation, AveragePooling2D
-from keras.models import Model
+from keras.models import Model, load_model
 import keras.backend as K
 from keras.regularizers import l1_l2
 from pprint import pprint
 from keras import __version__ as keras_version
 
 # my scripts import
-from simpleModel import get_dirs, formatTime, plot_and_save, print_best_acc, handle_opt_params
+from simpleModel import get_dirs, formatTime, plot_and_save, print_best_acc, handle_opt_params, model_from_config
 from automatize_helper import save_infos
+from TTA_Model import TTA_Model
 
 # python imports
 import os
@@ -22,8 +23,9 @@ import time
 import datetime as dt
 import platform
 import re
-from packaging import version
 import random as rn
+from packaging import version
+from tqdm import trange
 
 os.environ['PYTHONHASHSEED'] = '0'
 np.random.seed(42)
@@ -57,6 +59,7 @@ def _get_Args():
 	parser.add_argument("-da","--data_augmentation", help = "Kind of data augmentation used", nargs='+', type=da_regex)
 	parser.add_argument("-c","--center", help = "Apply featurewise center on samples", action="store_true")
 	parser.add_argument("-std_norm","--stdev_normalization", help = "Apply featurewise standard normalization on samples", action="store_true")
+	parser.add_argument("-ctm", "--custom", help = "Use different architecture from hardcoded configurations", nargs='+')
 
 	#TODO: usar aumento de dados de acordo com a passagem de argumentos
 
@@ -77,10 +80,52 @@ def get_network(network):
 
 	return sizes[network]
 
+class tta_callback(Callback):
+
+	def __init__(self, val_dir, filepath, *args, **kwargs):
+		super(tta_callback, self).__init__()
+		self.tta = TTA_Model(self.model, *args, **kwargs)
+		self.dir = val_dir
+		self.best_idx = 0
+		self.preds = []
+		self.filepath = filepath
+		self.commands = ["stop", "pare", "chega", "acabe", "end", "ok", "true"]
+		with open("cnn_remote_command.txt", "w") as f:
+			# clearing the command file
+			f.write("")
+
+	def on_epoch_end(self, epoch, logs=None):
+		self.tta.set_model(self.model)
+		if epoch == 0:
+			pred = self.tta.predict(self.dir)
+			print("*** Augmented average prediction for epoch {}: {:05.4f}".format(epoch+1, pred))
+		else:
+			pred = self.tta.predict_on_loaded_files()
+			print("*** Augmented average prediction for epoch {}: {:05.4f}".format(epoch+1, pred))
+		self.preds.append(pred)
+
+		if self.preds[self.best_idx] < pred:
+			self.best_idx = epoch
+			self.model.save(self.filepath, overwrite=True)
+
+		try:
+			with open("cnn_remote_command.txt", "r") as f:
+				f.readline().split()[0]
+				if cmd.lower() in self.commands:
+					print("Stoppig training by external command")
+					self.model.stop_training = True
+		except Exception as e:
+			pass
+
+	def on_train_end(self, logs=None):
+
+		print("Best accuracy for test time average: {} on epoch {} ".format(
+									self.preds[self.best_idx], self.best_idx+1))
+
 def my_schedule(total_epoch):
 	def schedule(epoch, lr):
 		# diminui o alfa em 10 vezes quando chega nas epocas 100 e 200
-		if epoch == int(total_epoch*1./3.) or epoch == int(total_epoch*2./3.):
+		if epoch == int(total_epoch*1./2.):
 			lr = lr/10.0
 		return lr
 	return schedule
@@ -108,7 +153,8 @@ def transfer_learning_train(net_name, base_model, model, train_gen, test_gen,
 	# training
 	print("Transfer learning")
 	hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-								epochs=eps, callbacks=[best_acc, early_stopper],
+								verbose = 2, epochs=eps,
+								callbacks=[best_acc, early_stopper],
 								validation_data=valid_gen,
 								validation_steps=num_valid//bs, shuffle=True)
 
@@ -177,6 +223,10 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen,
 	best_acc = ModelCheckpoint(checkpoint_path, monitor=metric, verbose=0,
 			save_best_only=True, save_weights_only=False, mode='auto', period=1)
 	lrs = LearningRateScheduler(my_schedule(eps), verbose=0)
+	tta_path = 'fine_tuning_{}_best_average_lrate{}_bsize{}_epochs{}_{}.h5'.format(net_name, lr, bs, eps, time.time())
+	tta_cb = tta_callback(valid_gen.directory, tta_path, 4,
+				mean = valid_gen.image_data_generator.mean,
+				std = valid_gen.image_data_generator.std, bf_soft = True)
 	# Helper: Stop when we stop learning.
 	early_stopper = EarlyStopping(monitor=metric, patience=10)
 	reduce_lr = ReduceLROnPlateau(monitor=metric, factor=0.1,
@@ -184,12 +234,14 @@ def fine_tuning_train(net_name, model, train_gen, test_gen, valid_gen,
 
 	if valid_gen:
 		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-									epochs=eps, callbacks=[best_acc, early_stopper],
+									verbose = 2, epochs=eps,
+									callbacks=[best_acc, tta_cb, reduce_lr],
 									validation_data=valid_gen,
 									validation_steps=num_valid//bs, shuffle=True)
 	else:
 		hist = model.fit_generator(train_gen, steps_per_epoch=num_train//bs,
-									epochs=eps, callbacks=[best_acc, early_stopper],
+									verbose = 2, epochs=eps,
+									callbacks=[best_acc, early_stopper],
 									shuffle=True)
 
 	if test_gen:
@@ -259,13 +311,27 @@ def get_img_fit_flow(image_config, fit_sample_size, flow_dir_config):
 
 		batch_size = flow_dir_config['batch_size'] if 'batch_size' in flow_dir_config else 16
 
-		for i in range(batches.samples//batch_size):
-			imgs, labels = next(batches)
-			idx = np.random.choice(imgs.shape[0], int(batch_size*fit_sample_size),
-																replace=False)
-			mean, stdev, count_samples = sample_statistics(imgs[idx], mean,
-														stdev, count_samples)
+		db_name = os.path.split(os.path.split(flow_dir_config['directory'])[0])[1]
+		try:
+			with open('mean_'+db_name+'.txt', "r") as f:
+				# parse a list-like string into a np.array
+				mean = np.array(list(map(float,f.read()[1:-2].split())))
+			with open('stdev_'+db_name+'.txt', "r") as f:
+				stdev = np.array(list(map(float,f.read()[1:-2].split())))
+		except Exception as e:
+			print("mean and stdev not found: {}".format(e))
 
+			for i in trange(batches.samples//batch_size), desc='Taking mean and standard deviation'):
+			#for i in range(batches.samples//batch_size):
+				imgs, labels = next(batches)
+				idx = np.random.choice(imgs.shape[0], int(batch_size*fit_sample_size),
+																	replace=False)
+				mean, stdev, count_samples = sample_statistics(imgs[idx], mean,
+															stdev, count_samples)
+			with open('mean_'+db_name+'.txt', "w") as f:
+				f.write(str(mean))
+			with open('stdev_'+db_name+'.txt', "w") as f:
+				f.write(str(stdev))
 
 	new_img_gen = ImageDataGenerator(**image_config)
 	if 'featurewise_std_normalization' in image_config and image_config['featurewise_std_normalization']:
@@ -348,53 +414,147 @@ def load_dataset(bs, indir, net_model, center = True,
 	return (num_classes, img_size, train_gen, valid_gen, test_gen,
 			num_train, num_valid, num_test)
 
+def custom_model(num_classes, cfg0, cfg1):
+
+	CFG_FEATURES = {	#320x320x3
+		'A': ({"type": "Conv2d", "filters": 64, "size":(7,7), "stride": 2, "padding": "valid"},	#160x160x64
+			  {"type": "MaxPool2d", "size": 3, "stride": 2}, #80x80x64
+			  {"type": "Conv2d", "filters": 128, "size":(3,3), "stride": 1, "padding": "same"}, #80x80X128
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #40x40X128
+			  {"type": "Conv2d", "filters": 256, "size":(3,3), "stride": 1, "padding": "same"}, #40x40X256
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #20x20X256
+			  {"type": "Conv2d", "filters": 512, "size":(3,3), "stride": 1, "padding": "same"}, #20x20X512
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #10x10X512
+			  {"type": "Conv2d", "filters": 1024, "size":(3,3), "stride": 1, "padding": "same"}, #10x10X1024
+			 ),
+			 #320x320x3
+		'B': ({"type": "Conv2d", "filters": 64, "size":(7,7), "stride": 2, "padding": "valid"},	#160x160x64
+			  {"type": "MaxPool2d", "size": 3, "stride": 2}, #80x80x64
+			  {"type": "Conv2d", "filters": 64, "size":(3,1), "stride": 1, "padding": "same"}, #80x80X128
+			  {"type": "Conv2d", "filters": 128, "size":(1,3), "stride": 1, "padding": "same"}, #80x80X128
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #40x40X128
+			  {"type": "Conv2d", "filters": 128, "size":(3,1), "stride": 1, "padding": "same"}, #40x40X256
+			  {"type": "Conv2d", "filters": 256, "size":(1,3), "stride": 1, "padding": "same"}, #40x40X256
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #20x20X256
+			  {"type": "Conv2d", "filters": 256, "size":(3,1), "stride": 1, "padding": "same"}, #20x20X512
+			  {"type": "Conv2d", "filters": 512, "size":(1,3), "stride": 1, "padding": "same"}, #20x20X512
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #10x10X512
+			  {"type": "Conv2d", "filters": 512, "size":(3,1), "stride": 1, "padding": "same"}, #10x10X512
+ 			  {"type": "Conv2d", "filters": 1024, "size":(1,3), "stride": 1, "padding": "same"} #10x10X1024
+			 ),
+		'C': ({"type": "Conv2d", "filters": 64, "size":(7,7), "stride": 2, "padding": "valid"},	#160x160x64
+			  {"type": "MaxPool2d", "size": 3, "stride": 2}, #80x80x64
+			  {"type": "Conv2d", "filters": 128, "size":(3,3), "stride": 1, "padding": "same"}, #80x80X128
+			  {"type": "Conv2d", "filters": 128, "size":(3,3), "stride": 1, "padding": "same"}, #80x80X128
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #40x40X128
+			  {"type": "Conv2d", "filters": 256, "size":(3,3), "stride": 1, "padding": "same"}, #40x40X256
+			  {"type": "Conv2d", "filters": 256, "size":(3,3), "stride": 1, "padding": "same"}, #40x40X256
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #20x20X256
+			  {"type": "Conv2d", "filters": 512, "size":(3,3), "stride": 1, "padding": "same"}, #20x20X512
+			  {"type": "Conv2d", "filters": 512, "size":(3,3), "stride": 1, "padding": "same"}, #20x20X512
+			  {"type": "MaxPool2d", "size": 2, "stride": 2}, #10x10X512
+			  {"type": "Conv2d", "filters": 1024, "size":(3,3), "stride": 1, "padding": "same"}, #10x10X1024
+			  {"type": "Conv2d", "filters": 1024, "size":(3,3), "stride": 1, "padding": "same"}, #10x10X1024
+			 ),
+
+	    'D': ({"type": "Conv2d", "filters": 64, "size":(7,7), "stride": 2, "padding": "valid"},	#160x160x64
+			 {"type": "MaxPool2d", "size": 3, "stride": 2}, #80x80x64
+			 {"type": "Conv2d", "filters": 128, "size":(3,3), "stride": 1, "padding": "same"}, #80x80X128
+			 {"type": "Conv2d", "filters": 256, "size":(3,3), "stride": 1, "padding": "same"}, #80x80X128
+			 {"type": "MaxPool2d", "size": 2, "stride": 2}, #40x40X128
+			 {"type": "Conv2d", "filters": 512, "size":(3,3), "stride": 1, "padding": "same"}, #40x40X256
+			 {"type": "Conv2d", "filters": 1024, "size":(3,3), "stride": 1, "padding": "same"}, #40x40X256
+			 {"type": "MaxPool2d", "size": 2, "stride": 2}, #20x20X256
+			 {"type": "Conv2d", "filters": 2048, "size":(3,3), "stride": 1, "padding": "same"}, #20x20X512
+			 {"type": "Conv2d", "filters": 4096, "size":(3,3), "stride": 1, "padding": "same"}, #20x20X512
+			 {"type": "MaxPool2d", "size": 2, "stride": 2}, #10x10X512
+			 {"type": "Conv2d", "filters": 4096, "size":(3,3), "stride": 1, "padding": "same"}, #10x10X1024
+			 {"type": "Conv2d", "filters": 4096, "size":(3,3), "stride": 1, "padding": "same"}, #10x10X1024
+			)
+		}
+
+	# configuracoes da rede para a parte densa
+	CFG_CLASSIFIER = {
+		'A': ({"type": "Linear", "out_features": 1024},
+			  {"type": "Dropout", "rate": 0.6}
+			 ),
+		'B': ({"type": "GlobalAveragePooling2d"}
+			 )
+	}
+
+	cfg0 = cfg0.upper()
+	cfg1 = cfg1.upper()
+
+	if (not cfg0 in CFG_FEATURES) or (not cfg1 in CFG_CLASSIFIER):
+		print("ERROR: configuration {} {} not found!".format(cfg0, cfg1))
+		exit(0)
+
+	X_input = Input((320,320))
+	X = X_input
+	X = _make_layers(X, CFG_FEATURES[cfg0], True, None, None)
+	X = Flatten()(X)
+	X = _make_layers(X, CFG_CLASSIFIER[cfg1], True, None, None)
+	X = Dense(num_classes, activation='softmax', use_bias=False)(X)
+	# Create model. This creates your Keras model instance, you'll use this instance to train/test the model.
+	model = Model(inputs = X_input, outputs = X, name='Model'+cfg0+cfg1)
+
+	return model
+
 def app_model(img_size, num_channels, net_model, dense,
-			  dpout, num_classes, rm=None):
+			  dpout, num_classes, rm = None, custom = None):
 
 	###############################################
 	############### Preparing Model ###############
 	###############################################
 
-	# getting the base model
-	network = get_network(net_model)
-	base_model = network(include_top=False, weights='imagenet',
-						 input_shape=(img_size, img_size, num_channels))
-	X = base_model.output
-	# Since version 2.2.0 ResNet50 do not include the last Average Polling layer when include_top parameter is False
-	# but we need it
-	if (net_model == 'resnet50' and version.parse(keras_version) >= version.parse('2.2.0')):
-		X = AveragePooling2D((7, 7))(X)
-	X = Flatten()(X)
+	try:
+		model = load_model(rm)
+		base_model = model
+	except:
+		if custom:
+			model = custom_model(num_classes, custom[0], custom[1])
+			base_model = model
+		else:
+			# getting the base model
+			network = get_network(net_model)
+			base_model = network(include_top=False, weights='imagenet',
+								 input_shape=(img_size, img_size, num_channels))
+			X = base_model.output
+			# Since version 2.2.0 ResNet50 do not include the last Average Polling layer when include_top parameter is False
+			# but we need it
+			if (net_model == 'resnet50' and version.parse(keras_version) >= version.parse('2.2.0')):
+				X = AveragePooling2D((7, 7))(X)
+			X = Flatten()(X)
 
-	if dense and dpout:
-		count = 0
-		# assure the right type will be passed
-		if not type(dense) == list:
-			dense = list(map(int,[dense]))
-		if not type(dpout) == list:
-			dpout = list(map(int,[dpout]))
+			if dense and dpout:
+				count = 0
+				# assure the right type will be passed
+				if not type(dense) == list:
+					dense = list(map(int,[dense]))
+				if not type(dpout) == list:
+					dpout = list(map(int,[dpout]))
 
-		for units, rate in zip(dense, dpout):
+				for units, rate in zip(dense, dpout):
 
-			X = Dense(units, use_bias=False, name='extra_dense{}'.format(count))(X)
-			X = BatchNormalization(name='extra_bn{}'.format(count))(X)
-			X = Activation('relu', name='extra_activation{}'.format(count))(X)
-			X = Dropout(rate, name='extra_dropout{}'.format(count))(X)
-			count+=1
+					X = Dense(units, use_bias=False, name='extra_dense{}'.format(count))(X)
+					X = BatchNormalization(name='extra_bn{}'.format(count))(X)
+					X = Activation('relu', name='extra_activation{}'.format(count))(X)
+					X = Dropout(rate, name='extra_dropout{}'.format(count))(X)
+					count+=1
 
-	# adding a top layer and setting the final model
-	predictions = Dense(num_classes, activation='softmax')(X)
-	model = Model(inputs = base_model.input, output=predictions)
+			# adding a top layer and setting the final model
+			predictions = Dense(num_classes, activation='softmax')(X)
+			model = Model(inputs = base_model.input, output=predictions)
 
-	# load weights from a previous train
-	if rm:
-		model.load_weights(rm)
+		# load weights from a previous train
+		if rm:
+			model.load_weights(rm)
 
 	return base_model, model
 
 def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all,
 		  nb_channel=3, l1=0, l2=0, center = True, std_norm = True,
-		  data_aug = {}):
+		  data_aug = {}, custom = []):
 
 	# dictionaries to save informations about executions
 	tl_infos, ft_infos = {}, {}
@@ -440,14 +600,14 @@ def train(indir, net_model, dense, dpout, tl, ft, lr, bs, eps, rm, all,
 		(score, hist, name_weights,
 		name_weights_best) = fine_tuning_train(net_model, model, train_gen,
 								test_gen, valid_gen, num_train, num_valid,
-								num_test, lr, bs, eps, all, l1, l2, metric='loss')
+								num_test, lr, bs, eps, all, l1, l2, metric='val_acc')
 
 		t = time.time()
 		end = time.strftime("%d/%b/%Y %H:%M:%S", time.localtime())
 		time_formated = str(dt.timedelta(seconds=t-s))
 
 		names = plot_and_save(hist, name_weights, False)
-		idx = print_best_acc(hist, metric='loss')
+		idx = print_best_acc(hist, metric='val_acc')
 
 		ft_infos = {'hist': hist, 'idx': idx, 'score': score,
 					'weights': [name_weights, name_weights_best],
@@ -477,7 +637,8 @@ def _main(args):
 				 args.batch_size, args.epochs, args.resume_model,args.all,
 				 l1=args.lambda1, l2=args.lambda2, center = args.center,
 				 std_norm = args.stdev_normalization,
-				 data_aug = retrieve_data_aug(args.data_augmentation))
+				 data_aug = retrieve_data_aug(args.data_augmentation),
+				 custom = args.custom)
 
 def create_obs(net_model, img_size, dense, dropout, transferlearning,
 				finetuning, all_layers):
@@ -525,7 +686,7 @@ if __name__ == '__main__':
 	if platform.system() == 'Windows':
 		outdir = "D:\\keras_Examples\\Resutados temp\\TestDataset"
 	else:
-		outdir = "Experimentos/UCF11"
+		outdir = "Experimentos/UCF101"
 
 	obs = create_obs(args.net_model, img_size, args.dense, args.dropout,
 						args.transferlearning, args.finetuning, args.all)
