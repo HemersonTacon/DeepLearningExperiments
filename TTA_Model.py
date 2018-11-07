@@ -8,6 +8,9 @@ from keras.layers import Dense, Activation
 from keras.preprocessing.image import ImageDataGenerator, load_img, img_to_array
 import re
 from keras import backend as K
+from keras.applications import InceptionV3
+from pprint import pprint
+from tqdm import tqdm
 
 class TTA_Model():
     """A simple TTA wrapper for keras computer vision models.
@@ -19,20 +22,27 @@ class TTA_Model():
     """
 
     def __init__(self, model, n, mean = None, std = None, bf_soft = False,
-                    exclude_outliers = 0):
+                    exclude_outliers = 0, debug = False, target_size = 224):
+        self.debug = debug
         self.model = model
         self.n = n
         self.mean = mean
         self.std = std
         self.bf_soft = bf_soft
         self.function_bf_soft = None
-        self.exclude_outliers = exclude_outliers
+        self.outliers = exclude_outliers
+        self.target_size = target_size
         if self.bf_soft:
             self.function_bf_soft = self.get_before_softmax()
 
+        if self.debug:
+            print("##### Setting TTA_Model #####")
+            print("Properties:")
+            pprint(vars(self))
+
     def get_before_softmax(self):
         """Remake the last dense layer to get access to
-        activation before softmax be applied"""
+        values before softmax be applied"""
         if self.model:
             temp = self.model.layers[-2].output
             temp = Dense(self.model.layers[-1].output.shape[1]._value, name = "new_dense")(temp)
@@ -44,8 +54,8 @@ class TTA_Model():
 
             return K.function([new_model.layers[0].input], [new_model.layers[-2].output])
 
-    def set_exclude_outliers(self, n):
-        self.exclude_outliers = n
+    def set_outliers(self, n):
+        self.outliers = n
 
     def set_model(self, model):
         self.model = model
@@ -67,44 +77,59 @@ class TTA_Model():
 
     def remove_outliers(self, preds):
 
+        if (type(preds) == list):
+            preds = preds[0]
+
+        mask = np.array([True]*len(preds))
+
         if (self.outliers > 0):
-            if (len(preds.shape) == 3 and preds.shape[0] == 1):
-                preds = preds.reshape((preds.shape[1], preds.shape[2]))
-
             max_list = [{'value':np.max(pred), 'idx':idx} for idx, pred in enumerate(preds)]
-
             max_list = sorted(max_list, key = lambda k: k['value'])
 
-            for i in range(self.exclude_outliers):
+            for i in range(self.outliers):
                 if (i % 2 == 0):
                     # delete the top maximum
-                    del preds[max_list[i]['idx']]
+                    mask[max_list[i]['idx']] = False
                 else:
                     # delete the bottom maximum
-                    del preds[max_list[-(i+1)]['idx']]
+                    mask[max_list[-(i+1)]['idx']] = False
 
-        return preds
+        return preds[mask]
 
     def check_label(self, pred, idx):
 
-        return self.class_indices[self.ground_truth[idx]] == np.argmax(pred)
+        return self.class_indexes[self.ground_truth[idx]] == np.argmax(pred)
 
     def predict_on_loaded_files(self):
 
-
         final_score = []
+        # for each original sample
         for idx in range(self.num_samples//self.n):
+            if self.debug:
+                print("Sample {}/{} ({:6.4f}%)".format(idx+1,
+                        self.num_samples//self.n,
+                        100*(idx+1)/(self.num_samples//self.n)))
             imgs = []
+            # load the augmented samples
             for i in range(self.n):
                 img = load_img(self.filenames[idx * self.n + i],
-                                            target_size = (224,224))
+                            target_size = (self.target_size,self.target_size))
+                # rescale according to parameters
                 if not type(self.mean) == type(None):
                     img = (img_to_array(img) - self.mean)/self.std
                 else:
                     img = img_to_array(img)/255.0
                 imgs.append(img)
+            # get the mean predict of these samples
             pred = self.predict(np.array(imgs))
+            # get the equivalent class
             final_score.append(self.check_label(pred, idx))
+            if self.debug:
+                print("Name {} [range 0-{}]".format(self.filenames[idx * self.n],self.n))
+                print("{} Pred_mean: {}".format(final_score[-1], pred))
+                print("Current absolute accuracy {}/{} ({:6.4f}%)".format(
+                                    sum(final_score), len(final_score),
+                                    100*sum(final_score)/len(final_score)))
 
         return np.mean(final_score)
 
@@ -121,72 +146,111 @@ class TTA_Model():
             for idx in range(0, len(X), self.n):
                 if self.bf_soft:
                     total = self.function_bf_soft([X[idx:idx+self.n]])
+                    pred.append(np.mean(total, axis=(0,1)))
                 else:
                     total = self.model.predict(X[idx:idx+self.n], batch_size = self.n)
-
-                total = self.exclude_outliers(total)
-                pred.append(np.mean(total, axis=0))
+                    pred.append(np.mean(total, axis=0))
 
             return np.array(pred)
 
         elif(type(X) == str):
 
-            directory = X
-            classes = []
-            results = []
-            final_score = []
-            self.filenames = []
-            self.ground_truth = []
+            self.load_filenames(X)
 
-            # list the classes
-            for subdir in sorted(os.listdir(directory)):
-                dirpath = os.path.join(directory, subdir)
-                # if it's a folder
-                if os.path.isdir(dirpath):
-                    # save it as a class name
-                    classes.append(subdir)
-                    # list the samples for each class
-                    for img_file in sorted(os.listdir(dirpath)):
-                        if (not os.path.join(dirpath, img_file) in self.filenames):
-                            # get the file name without extension
-                            f, ext = os.path.splitext(img_file)
-                            # verify if it's have a pattern of an augmented image
-                            name_pat = re.compile(r'(\w+\.*\w+\.*\w+\[.+\]\w+)(\d+)')
-                            res = re.search(name_pat, f)
-                            # get the base name without the augmentation number
-                            base_name, num = res.groups()
-                            self.filenames += [os.path.join(dirpath,
-                                base_name + str(i) + ext) for i in range(self.n)]
-                            self.ground_truth.append(classes[-1])
-
-            self.num_samples = len(self.filenames)
-            self.num_classes = len(classes)
-            self.class_indices = dict(zip(classes, range(len(classes))))
-
-            print("Found {} images augmented {} times belonging to {} classes".format(self.num_samples//self.n,
-                        self.n, self.num_classes))
-
-            for idx in range(self.num_samples//self.n):
-                imgs = []
-                for i in range(self.n):
-                    img = load_img(self.filenames[idx * self.n + i],
-                                                target_size = (224,224))
-                    if not type(self.mean) == type(None):
-                        img = (img_to_array(img) - self.mean)/self.std
-                    else:
-                        img = img_to_array(img)/255.0
-                    imgs.append(img)
-                pred = self.predict(np.array(imgs))
-                final_score.append(self.check_label(pred, idx))
-
-            return np.mean(final_score)
+            return self.predict_on_loaded_files()
 
         else:
             raise TypeError("Invalid type for variable X: {}\n" +
                     "It should be a numpy.ndarray or string".format(type(X)))
 
 
+    def np_softmax(self, X):
 
+        return np.exp(X)/np.sum(np.exp(X))
+
+    def load_filenames(self, filepath):
+
+        classes = []
+        self.filenames = []
+        self.ground_truth = []
+        # list the classes
+        for subdir in sorted(os.listdir(filepath)):
+            dirpath = os.path.join(filepath, subdir)
+            # if it's a folder
+            if os.path.isdir(dirpath):
+                # save it as a class name
+                classes.append(subdir)
+                # list the samples for each class
+                for img_file in sorted(os.listdir(dirpath)):
+                    if (not os.path.join(dirpath, img_file) in self.filenames):
+                        # get the file name without extension
+                        #f, ext = os.path.splitext(img_file)
+                        # verify if it's have a pattern of an augmented image
+                        #name_pat = re.compile(r'(\w+\.*\w+\.*\w+\[.+\]\w+)(\d+)')
+                        #res = re.search(name_pat, f)
+                        # get the base name without the augmentation number
+                        #base_name, num = res.groups()
+                        name = os.path.basename(img_file)
+                        try:
+                            x = int(name[-6:-4])
+                            base_name, ext = name[:-5], name[-4:]
+                        except ValueError:
+                            x = int(name[-5])
+                            base_name, ext = name[:-6], name[-4:]
+                        # save the filenames of the augmented images found
+                        self.filenames += [os.path.join(dirpath,
+                            base_name + str(i) + ext) for i in range(self.n)]
+                        # the correspondent class is the last class listed
+                        self.ground_truth.append(classes[-1])
+        self.num_samples = len(self.filenames)
+        self.num_classes = len(classes)
+        # create the dictionary with the pair index-class
+        self.class_indexes = dict(zip(classes, range(len(classes))))
+        print("Found {} images augmented {} times belonging to {} classes".format(self.num_samples//self.n,
+                                                    self.n, self.num_classes))
+
+    def extract(self, X):
+
+        filepath = X
+        self.load_filenames(filepath)
+
+        with tqdm(total=self.num_samples//self.n, ascii=True) as pbar:
+            # for each original sample
+            for idx in range(self.num_samples//self.n):
+                if self.debug:
+                    print("Sample {}/{} ({:6.4f}%)".format(idx+1,
+                                self.num_samples//self.n,
+                                100*(idx+1)/(self.num_samples//self.n)))
+                imgs = []
+                # load the augmented samples
+                for i in range(self.n):
+                    img = load_img(self.filenames[idx * self.n + i],
+                            target_size = (self.target_size,self.target_size))
+                    # rescale according to parameters
+                    if not type(self.mean) == type(None):
+                        img = (img_to_array(img) - self.mean)/self.std
+                    else:
+                        img = img_to_array(img)/255.0
+                    imgs.append(img)
+                pred = self.predict(np.array(imgs))
+
+                # apply softmax
+                pred = self.np_softmax(pred)
+
+                # save activations
+                # extract the path without extension and augmentation number
+                path = os.path.splitext(self.filenames[idx * self.n])[0][:-2]
+                # split in all subdirs
+                path = path.split(os.sep)
+                # add extractions sufix to the position with the set name
+                path[-3] = path[-3]+"_extractions"
+                # join back
+                path = os.path.join(*path)
+                if path[0] != os.sep:
+                    path = os.sep + path
+                os.makedirs(os.path.split(path)[0], exist_ok=True)
+                np.save(path, pred)
+                pbar.update(1)
 
 def unit_test_predict():
     from applications_train import get_img_fit_flow
@@ -495,3 +559,81 @@ def exp_test_predict101():
     print("\n**** General diferrence mean per model configuration: \n{}".format(np.mean(diff, axis=(0,1,3))))
 
     return diff
+
+def new_db_test():
+
+    model_name="fine_tuning_resnet50_best_average_lrate0.001_bsize16_epochs1000_1538710766.7281132.h5"
+    db = "/home/gcgic/Documents/Hemerson/Datasets/UCF101/UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_12/valid"
+    model = load_model(model_name)
+    tta = TTA_Model(model, 12, bf_soft = True, exclude_outliers = 2)
+    preds = tta.predict(db)
+
+    print("Prediction: {}".format(preds))
+
+def inception_test():
+
+    '''base_model = InceptionV3(include_top=False, weights='imagenet')
+    X = base_model.output
+    X = GlobalAveragePooling2D()(X)
+    predictions = Dense(101, activation='softmax')(X)
+    model = Model(inputs = base_model.input, output=predictions)'''
+    model_name= "/home/gcgic/Documents/Hemerson/Experimentos/UCF101/Experimento286/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538961436.171802.h5"
+    model = load_model(model_name)
+    db = "/home/gcgic/Documents/Hemerson/Datasets/UCF101/UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_12/valid"
+    db_name = db.split(os.sep)[7]
+
+    try:
+        with open('mean_'+db_name+'.txt', "r") as f:
+            # parse a list-like string into a np.array
+            mean = np.array(list(map(float,f.read()[1:-2].split())))
+        with open('stdev_'+db_name+'.txt', "r") as f:
+            stdev = np.array(list(map(float,f.read()[1:-2].split())))
+    except Exception as e:
+        print("mean and stdev not found: {}".format(e))
+
+    tta = TTA_Model(model, 12,  mean = mean, std = stdev, bf_soft = True, target_size = 299)
+
+    preds = tta.predict(db)
+    print("Prediction: {}".format(preds))
+
+def extract_features(db=None, model_name=None, n=None):
+
+    db = db or "/home/gcgic/Documents/Hemerson/Datasets/UCF101/UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_12/valid"
+    model_name= model_name or "/home/gcgic/Documents/Hemerson/Experimentos/UCF101/Experimento286/fine_tuning_inceptionv3_best_lrate0.001_bsize16_epochs1000_1538961436.171802.h5"
+    model = load_model(model_name)
+    db_name = db.split(os.sep)[-2]
+    n = n or 12
+
+    try:
+        with open('mean_'+db_name+'.txt', "r") as f:
+            # parse a list-like string into a np.array
+            mean = np.array(list(map(float,f.read()[1:-2].split())))
+        with open('stdev_'+db_name+'.txt', "r") as f:
+            stdev = np.array(list(map(float,f.read()[1:-2].split())))
+    except Exception as e:
+        print("mean and stdev not found: {}".format(e))
+
+    tta = TTA_Model(model, n, mean = mean, std = stdev, bf_soft = True, target_size = 299)
+
+    tta.extract(db)
+#
+# from TTA_Model import TTA_Model
+# from keras.models import load_model
+# importnumpy as np
+# model_name = "fine_tuning_resnet50_best_average_lrate0.001_bsize16_epochs1000_1538918287.5865746.h5"
+# db = "Datasets/UCF101/UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_12/valid/"
+# db_name = "UCF101_VR_RGB_H_Gaussian_SZ_99_SG_33_split1_window_12"
+# model = load_model(model_name)
+#
+# try:
+#     with open('mean_'+db_name+'.txt', "r") as f:
+#         # parse a list-like string into a np.array
+#         mean = np.array(list(map(float,f.read()[1:-2].split())))
+#     with open('stdev_'+db_name+'.txt', "r") as f:
+#         stdev = np.array(list(map(float,f.read()[1:-2].split())))
+# except Exception as e:
+#     print("mean and stdev not found: {}".format(e))
+#
+# tta = TTA_Model(model, 12,  mean = mean, std = stdev, bf_soft = True, debug = True)
+# preds = tta.predict(db)
+# print("Prediction: {}".format(preds))
