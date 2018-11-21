@@ -138,7 +138,6 @@ def videoCapture(direction, vid_file, percentil, color_mode, mode, sigma,
 			print("Invalid frame at position {} of {} on video {}".format(i+1,length,vid_file))
 			invalid_frames += 1
 			continue
-		print(frame.mode)
 		if color_mode == 'gray':
 			frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # convert to grayscale
 		else:
