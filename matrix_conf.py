@@ -1,12 +1,8 @@
 import numpy as np
 import os
 import argparse
-import multiprocessing
-from sklearn.model_selection import ParameterGrid
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix
 import pandas as pd
-import time
-import random
 import seaborn as sn
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
@@ -72,9 +68,9 @@ def plot_matrix(cm, class_names, out_dir, fig_size=(10, 7),
                                 ha='center', fontsize=font_size)
     else:
         hm = sn.heatmap(df_cm, annot=False, vmin=0.0, vmax=1.0, cmap=cmap)
-        hm.yaxis.set_ticklabels(hn.yaxis.get_ticklabels(), rotation=0,
+        hm.yaxis.set_ticklabels(hm.yaxis.get_ticklabels(), rotation=0,
                                 ha='right', fontsize=font_size)
-        hm.xaxis.set_ticklabels(hn.xaxis.get_ticklabels(), rotation=45,
+        hm.xaxis.set_ticklabels(hm.xaxis.get_ticklabels(), rotation=45,
                                 ha='right', fontsize=font_size)
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
@@ -100,7 +96,7 @@ def plot_bar(cm, class_names, out_dir, fig_size=(10, 7), font_size=14,
     # generate spaced ticks
     ticks = np.linspace(0, n_groups - 1, n_groups//10 + 1, dtype=np.int16)
     # add the first tick
-    #ticks = np.insert(ticks, 0, 1, axis=0)
+    # ticks = np.insert(ticks, 0, 1, axis=0)
     bar_width = 0.8
 
     opacity = 0.4
@@ -117,9 +113,9 @@ def plot_bar(cm, class_names, out_dir, fig_size=(10, 7), font_size=14,
 
         # default bar plot
         if cm_list is None:
-            rects1 = ax.bar(index, main_diag, bar_width, edgecolor="black",
-                            linewidth=0, alpha=opacity,
-                            color=(153/255., 153/255., 1), label="Accuracy")
+            ax.bar(index, main_diag, bar_width, edgecolor="black",
+                   linewidth=0, alpha=opacity, color=(153/255., 153/255., 1),
+                   label="Accuracy")
         # bar plot of individual contributions
         else:
             # temp_color = 153/255.
@@ -151,8 +147,8 @@ def plot_bar(cm, class_names, out_dir, fig_size=(10, 7), font_size=14,
                 for i in range(3):
                     diag = (np.diagonal(cm_list[i]) + np.diagonal(cm_list[i+3])
                             + np.diagonal(cm_list[i + 6])) / 3.0
-                    rects = ax.bar(idx_pos, diag, bar_width, alpha=opacity,
-                                   color=colors[i], label=labels[i])
+                    ax.bar(idx_pos, diag, bar_width, alpha=opacity,
+                           color=colors[i], label=labels[i])
                     patch[cont] = mpatches.Patch(color=comb_colors[cont],
                                                  label=labels[i])
                     cont += 1
@@ -180,19 +176,19 @@ def plot_bar(cm, class_names, out_dir, fig_size=(10, 7), font_size=14,
                     # print("{} won in {} classes".format(labels[j],
                     #       len(diag_pos)))
                     diag = np.diagonal(cm_list[j])
-                    rects = ax.bar(idx_pos, diag, bar_width, alpha=opacity,
-                                   color=colors[j], label=labels[j])
+                    ax.bar(idx_pos, diag, bar_width, alpha=opacity,
+                           color=colors[j], label=labels[j])
 
     else:
         opacity = 1.0
-        rects1 = ax.bar(idx_pos, diag_pos, bar_width, alpha=opacity,
-                        color=(153/255., 153/255., 1), label=labels[0])
+        ax.bar(idx_pos, diag_pos, bar_width, alpha=opacity,
+               color=(153/255., 153/255., 1), label=labels[0])
 
         print("{} won in {} classes".format(labels[0],
               len(diag_pos) - np.count_nonzero(main_diag == 0)))
 
-        rects2 = ax.bar(idx_neg, diag_neg, bar_width, alpha=opacity,
-                        color=(1., 153/255., 153/255.), label=labels[1])
+        ax.bar(idx_neg, diag_neg, bar_width, alpha=opacity,
+               color=(1., 153/255., 153/255.), label=labels[1])
 
         print("{} won in {} classes".format(labels[1], len(diag_neg)))
         print("Tie in {} classes".format(np.count_nonzero(main_diag == 0)))
@@ -244,8 +240,8 @@ def calc_acc(Y, y_pred):
     return test_acc
 
 
-def np_softmax(X):
-    return np.exp(X)/np.sum(np.exp(X))
+# def np_softmax(X):
+#    return np.exp(X)/np.sum(np.exp(X))
 
 
 def load_label(filename, classes=None):
@@ -271,8 +267,8 @@ def load_label(filename, classes=None):
     return labels
 
 
-def make_confusion_matrix(Y, Y_pred, classes, out_dir, plot=False, normalize=True,
-                          name="chart"):
+def make_confusion_matrix(Y, Y_pred, classes, out_dir, plot=False,
+                          normalize=True, name="chart"):
 
     cm = confusion_matrix(Y, Y_pred)
 
@@ -284,7 +280,7 @@ def make_confusion_matrix(Y, Y_pred, classes, out_dir, plot=False, normalize=Tru
     print("Test accuracy: {:5.2f}%".format(accuracy*100))
 
     if(plot):
-        fig = plot_matrix(cm, classes, out_dir, name=name)
+        plot_matrix(cm, classes, out_dir, name=name)
 
     else:
         target_names = [str(i) for i in list(classes)]
@@ -334,6 +330,7 @@ def similarity(preds, labels, ground_truth):
 
 def conf_matrix(args, n, classes, y, out_dir):
 
+    np.set_printoptions(precision=3)
     if n == 1:  # simple confusion matrix
 
         npy = args.file_npy[0]
@@ -343,6 +340,8 @@ def conf_matrix(args, n, classes, y, out_dir):
 
         cm, accuracy = make_confusion_matrix(y, y_pred, classes, out_dir,
                                              plot=True, name=args.name)
+
+        np.save("cm_dump.npy", cm)
 
     else:
         if n == args.multi_stream and args.multi_stream == len(args.weights):
@@ -390,9 +389,12 @@ def conf_matrix(args, n, classes, y, out_dir):
             main_diag = np.diagonal(cm_mean)
 
             print("Final mean accuracy: {:05.4f}".format(np.mean(main_diag)))
-            plot_matrix(cm_mean, classes, out_dir, name="{}_mean".format(args.name))
+            plot_matrix(cm_mean, classes, out_dir,
+                        name="{}_mean".format(args.name))
 
-        elif n == 3 and len(args.weights) == 1 and len(args.extra_labels) == 2:
+            np.save("cm_dump.npy", cm_mean)
+
+        elif n == 3 and args.weights is None and len(args.extra_labels) == 2:
             # all splits of one stream confusion matrix
             X_mean = []
             cm_mean = []
@@ -430,7 +432,10 @@ def conf_matrix(args, n, classes, y, out_dir):
             main_diag = np.diagonal(cm_mean)
 
             print("Final mean accuracy: {:05.4f}".format(np.mean(main_diag)))
-            plot_matrix(cm_mean, classes, out_dir, name="{}_mean".format(args.name))
+            plot_matrix(cm_mean, classes, out_dir,
+                        name="{}_mean".format(args.name))
+
+            np.save("cm_dump.npy", cm_mean)
 
         elif (n == 3 * args.multi_stream and
               args.multi_stream == len(args.weights) and
@@ -484,7 +489,10 @@ def conf_matrix(args, n, classes, y, out_dir):
             main_diag = np.diagonal(cm_mean)
 
             print("Final mean accuracy: {:05.4f}".format(np.mean(main_diag)))
-            plot_matrix(cm_mean, classes, out_dir, name="{}_mean".format(args.name))
+            plot_matrix(cm_mean, classes, out_dir,
+                        name="{}_mean".format(args.name))
+
+            np.save("cm_dump.npy", cm_mean)
 
 
 def diff_chart(args, n, classes, y, out_dir):
@@ -515,6 +523,9 @@ def diff_chart(args, n, classes, y, out_dir):
         #        np.sum(cf_np)/cf_np.shape[0]))
 
         diff = cms[0] - cms[1]
+        print(np.diag(cms[0]))
+        print(np.diag(cms[1]))
+        print(np.diag(diff))
         plot_bar(diff, classes, out_dir, name=args.name + "_diff",
                  labels=args.streams_names)
 
@@ -523,28 +534,33 @@ def diff_chart(args, n, classes, y, out_dir):
         cms = []
         arr = []
         cf = []
-                   
+
         for i in range(2):
 
             cm_mean = []
 
             for j in range(3):
-                
+
                 file_npy = args.file_npy[j*2+i]
                 X = np.load(file_npy)
                 print("X shape: {}".format(X.shape))
                 y_pred = np.argmax(X, axis=1)
-    
+
+                if j > 0:
+                    y = load_label(args.extra_labels[j-1], classes)
+                elif j == 0:
+                    y = load_label(args.file, classes)
+
                 cm, accuracy = make_confusion_matrix(y, y_pred, classes,
                                                      out_dir, plot=False,
                                                      name=args.name + str(i))
-                
+
                 # acumulo as matrizes de confusao de cada split
                 if len(cm_mean) == 0:
                     cm_mean = cm
                 else:
                     cm_mean += cm
-            
+
             cm = cm_mean.astype('float') / cm_mean.sum(axis=1)[:, np.newaxis]
             cms.append(cm)
 
